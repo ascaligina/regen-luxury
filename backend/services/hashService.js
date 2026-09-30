@@ -55,6 +55,7 @@ export function improntaEvento(evento) {
     descrizione: evento.descrizione,
     materialiNuovi: evento.materialiNuovi,
     operatore: evento.operatore,
+    luogo: evento.luogo, // assente sui dati precedenti: normalizza() lo omette, l'impronta non cambia
     data: evento.data ? new Date(evento.data) : null,
   });
 }
@@ -67,6 +68,7 @@ export function improntaPassaggio(passaggio) {
     tipo: "passaggio",
     id: String(passaggio._id),
     proprietario: passaggio.proprietario,
+    luogo: passaggio.luogo,
     data: passaggio.data ? new Date(passaggio.data) : null,
   });
 }

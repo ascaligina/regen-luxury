@@ -35,6 +35,7 @@ const regenerationEventSchema = new mongoose.Schema(
     // Origine dei nuovi materiali ecologici impiegati (RF)
     materialiNuovi: { type: String },
     operatore: { type: String }, // Artigiano / Operatore di Laboratorio
+    luogo: { type: String, trim: true }, // città e paese dell'intervento (facoltativo)
     data: { type: Date, default: Date.now },
     registratoDa: { type: mongoose.Schema.Types.ObjectId, ref: "User" },
     ancoraggio: { type: ancoraggioSchema }, // assente sui dati creati prima della v2
@@ -46,6 +47,7 @@ const regenerationEventSchema = new mongoose.Schema(
 const passaggioSchema = new mongoose.Schema(
   {
     proprietario: { type: String, required: true },
+    luogo: { type: String, trim: true }, // dove è avvenuto il passaggio: "Città, Paese" (facoltativo)
     data: { type: Date, default: Date.now },
     registratoDa: { type: mongoose.Schema.Types.ObjectId, ref: "User" },
     ancoraggio: { type: ancoraggioSchema },
@@ -68,6 +70,9 @@ const itemSchema = new mongoose.Schema(
     materialePrincipale: { type: String, enum: MATERIALI },
     annoProduzione: { type: Number },
     stato: { type: String, enum: STATI_CAPO, default: "attivo" },
+    // true = capo di un archivio dimostrativo (dati inventati per la demo): si mostra
+    // un avviso nel certificato e compare nel catalogo pubblico. Non entra nell'impronta.
+    dimostrativo: { type: Boolean, default: false },
 
     // --- Accoppiamento hardware-software (RF: associazione smart tag) ---
     // Codice univoco del tag NFC/QR fisico. L'indice UNIQUE impedisce che lo
@@ -99,5 +104,6 @@ const itemSchema = new mongoose.Schema(
 );
 
 itemSchema.index({ brand: 1, codiceModello: 1 });
+itemSchema.index({ dimostrativo: 1, brand: 1 });
 
 export default mongoose.model("Item", itemSchema);

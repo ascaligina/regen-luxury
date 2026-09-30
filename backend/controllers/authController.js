@@ -19,6 +19,37 @@ export async function login(req, res, next) {
   }
 }
 
+/**
+ * Iscrizione autonoma dalla web app (commerciante o artigiano).
+ * - il ruolo è limitato dallo schema (mai admin / brand_manager);
+ * - con REGISTRAZIONE_APPROVAZIONE=1 l'account nasce disattivato e lo attiva un amministratore;
+ * - altrimenti restituisce subito il token, come un login.
+ */
+export async function registra(req, res, next) {
+  try {
+    const { password, email, ...resto } = req.dati.body;
+    if (process.env.REGISTRAZIONE_CHIUSA === "1") {
+      return res.status(403).json({ errore: "Le iscrizioni sono chiuse: chiedi a un amministratore di creare il tuo account." });
+    }
+    if (await User.exists({ email: email.toLowerCase() })) {
+      return res.status(409).json({ errore: "Esiste già un account con questa email: prova ad accedere." });
+    }
+    const conApprovazione = process.env.REGISTRAZIONE_APPROVAZIONE === "1";
+    const utente = await User.create({ ...resto, email, attivo: !conApprovazione, passwordHash: await bcrypt.hash(password, 12) });
+    if (conApprovazione) {
+      return res.status(202).json({
+        inAttesaDiApprovazione: true,
+        messaggio: "Iscrizione ricevuta. Un amministratore deve attivare il tuo account prima del primo accesso.",
+      });
+    }
+    const token = jwt.sign({ sub: String(utente._id), ruolo: utente.ruolo }, jwtSecret(), { expiresIn: jwtExpires() });
+    res.status(201).json({ token, utente: pubblico(utente) });
+  } catch (err) {
+    if (err.code === 11000) return res.status(409).json({ errore: "Esiste già un account con questa email: prova ad accedere." });
+    next(err);
+  }
+}
+
 export function me(req, res) {
   res.json({ utente: req.utente });
 }

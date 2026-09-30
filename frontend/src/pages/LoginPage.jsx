@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Navigate, useLocation, useNavigate } from "react-router-dom";
+import { Link, Navigate, useLocation, useNavigate } from "react-router-dom";
 import { useAuth } from "../hooks/useAuth.jsx";
 import { Errore } from "../components/Stato.jsx";
 
@@ -46,6 +46,9 @@ export default function LoginPage() {
           {inCorso ? "Accesso…" : "Accedi"}
         </button>
       </form>
+      <p className="nota nota-centrata">
+        Non hai ancora un account? <Link to="/registrati">Iscriviti</Link>
+      </p>
     </section>
   );
 }

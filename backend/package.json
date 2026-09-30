@@ -17,6 +17,7 @@
     "misura-tempi": "node scripts/misura-tempi.js",
     "crea-admin": "node scripts/crea-admin.js",
     "popola-demo": "node scripts/popola-demo.js",
+    "popola-archivio": "node scripts/popola-archivio.js",
     "migra": "node scripts/migra-ancoraggi.js"
   },
   "dependencies": {

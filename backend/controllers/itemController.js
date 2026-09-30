@@ -172,8 +172,11 @@ export async function aggiungiPassaggioProprieta(req, res, next) {
     if (!item) return nonTrovato(res);
     if (item.stato === "archiviato") return archiviato(res);
 
+    const { proprietario, luogo, data } = req.dati.body;
     item.passaggiProprieta.push({
-      proprietario: req.dati.body.proprietario,
+      proprietario,
+      ...(luogo ? { luogo } : {}),
+      ...(data ? { data } : {}),
       registratoDa: req.utente.id,
       ancoraggio: { stato: "in_attesa", aggiornatoIl: new Date() },
     });

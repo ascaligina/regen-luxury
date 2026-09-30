@@ -1,6 +1,6 @@
 // Validazione dei dati in ingresso (requisito R: nessun dato malformato nel database).
 import { z } from "zod";
-import { TIPI_EVENTO, RUOLI, CATEGORIE, MATERIALI, STATI_CAPO, TAG_REGEX } from "../models/costanti.js";
+import { TIPI_EVENTO, RUOLI, RUOLI_AUTOREGISTRAZIONE, CATEGORIE, MATERIALI, STATI_CAPO, TAG_REGEX } from "../models/costanti.js";
 
 const testo = (max) => z.string().trim().min(1, "Campo obbligatorio").max(max, `Massimo ${max} caratteri`);
 const testoOpzionale = (max) => z.string().trim().max(max, `Massimo ${max} caratteri`).optional();
@@ -20,6 +20,23 @@ export const nuovoUtente = z.object({
   ruolo: z.enum(RUOLI),
   organizzazione: testoOpzionale(150),
 });
+
+// Iscrizione autonoma: niente ruolo admin/brand_manager, nessun campo extra
+export const registrazione = z
+  .object({
+    nome: testo(100),
+    email: z.string().trim().email("Email non valida").max(150),
+    password: z
+      .string()
+      .min(10, "La password deve avere almeno 10 caratteri")
+      .max(200)
+      .refine((p) => /[A-Za-z]/.test(p) && /\d/.test(p), "La password deve contenere almeno una lettera e un numero"),
+    ruolo: z.enum(RUOLI_AUTOREGISTRAZIONE, {
+      errorMap: () => ({ message: `Il ruolo deve essere uno tra: ${RUOLI_AUTOREGISTRAZIONE.join(", ")}` }),
+    }),
+    organizzazione: testoOpzionale(150),
+  })
+  .strict();
 
 export const cambioPassword = z.object({
   vecchia: z.string().min(1).max(200),
@@ -69,6 +86,7 @@ export const nuovoEvento = z
     descrizione: testo(1000),
     materialiNuovi: testoOpzionale(300),
     operatore: testoOpzionale(100),
+    luogo: testoOpzionale(120),
     data: z.coerce
       .date()
       .refine((d) => d.getTime() <= Date.now() + 60_000, "La data non può essere nel futuro")
@@ -76,7 +94,28 @@ export const nuovoEvento = z
   })
   .strict();
 
-export const nuovoPassaggio = z.object({ proprietario: testo(100) }).strict();
+export const nuovoPassaggio = z
+  .object({
+    proprietario: testo(100),
+    luogo: testoOpzionale(120),
+    // data del passaggio (se omessa: adesso); utile per ricostruire la storia di un capo d'epoca
+    data: z.coerce
+      .date()
+      .refine((d) => d.getFullYear() >= 1900, "Data non valida")
+      .refine((d) => d.getTime() <= Date.now() + 60_000, "La data non può essere nel futuro")
+      .optional(),
+  })
+  .strict();
+
+export const filtriCatalogo = z.object({
+  q: z.string().trim().max(100).optional(),
+  brand: z.string().trim().max(100).optional(),
+  categoria: z.enum(CATEGORIE).optional(),
+  materiale: z.enum(MATERIALI).optional(),
+  decennio: z.coerce.number().int().min(1980).max(2020).optional(),
+  pagina: z.coerce.number().int().min(1).default(1),
+  perPagina: z.coerce.number().int().min(1).max(60).default(24),
+});
 
 export const filtriElenco = z.object({
   q: z.string().trim().max(100).optional(),

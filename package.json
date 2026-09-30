@@ -9,6 +9,7 @@
     "copia-db": "npm --prefix backend run copia-db",
     "crea-admin": "npm --prefix backend run crea-admin --",
     "popola-demo": "npm --prefix backend run popola-demo --",
+    "popola-archivio": "npm --prefix backend run popola-archivio --",
     "passaggi": "npm --prefix backend run passaggi --",
     "misura-tempi": "npm --prefix backend run misura-tempi --",
     "migra": "npm --prefix backend run migra",

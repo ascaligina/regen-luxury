@@ -3,6 +3,10 @@ export const TIPI_EVENTO = ["riparazione", "upcycling", "sostituzione_parti"];
 
 export const RUOLI = ["admin", "brand_manager", "commerciante", "artigiano"];
 
+// Ruoli che una persona può scegliere da sola iscrivendosi dalla web app.
+// Brand manager e admin si ottengono solo da un amministratore (nessuna escalation).
+export const RUOLI_AUTOREGISTRAZIONE = ["commerciante", "artigiano"];
+
 export const CATEGORIE = [
   "giacca", "cappotto", "abito", "camicia", "t-shirt", "maglione",
   "pantaloni", "jeans", "gonna", "borsa", "scarpe", "accessorio", "altro",

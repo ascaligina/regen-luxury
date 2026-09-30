@@ -8,6 +8,7 @@ import { fileURLToPath } from "node:url";
 import itemsRouter from "./routes/items.js";
 import verifyRouter from "./routes/verify.js";
 import authRouter from "./routes/auth.js";
+import catalogoRouter from "./routes/catalogo.js";
 import { notFound, errorHandler } from "./middleware/errorHandler.js";
 
 const cartellaFrontend = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../frontend/dist");
@@ -46,6 +47,7 @@ export function creaApp() {
   app.use("/api/auth", authRouter());       // login e gestione account
   app.use("/api/items", itemsRouter);       // gestione capi (lato commerciante)
   app.use("/api/verify", verifyRouter());   // verifica pubblica (lato consumatore)
+  app.use("/api/catalogo", catalogoRouter()); // catalogo pubblico dell'archivio dimostrativo
   app.use("/api", notFound);
 
   // --- Web app React (se compilata): stesso dominio e stesso HTTPS delle API ---

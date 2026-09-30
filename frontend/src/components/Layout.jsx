@@ -3,7 +3,7 @@ import { Link, NavLink, Outlet, useLocation, useNavigate } from "react-router-do
 import { useAuth } from "../hooks/useAuth.jsx";
 import { useArmadio } from "../utils/archivio.js";
 import StoricoMenu from "./StoricoMenu.jsx";
-import { IconaGruccia, IconaScansione, IconaUtente } from "./Icone.jsx";
+import { IconaGruccia, IconaScansione, IconaUtente, IconaCatalogo } from "./Icone.jsx";
 
 export default function Layout() {
   const { utente, logout } = useAuth();
@@ -38,6 +38,10 @@ export default function Layout() {
             <IconaScansione dimensione={18} />
             <span>Verifica</span>
           </NavLink>
+          <NavLink to="/catalogo" className="menu-voce">
+            <IconaCatalogo dimensione={18} />
+            <span>Catalogo</span>
+          </NavLink>
           <NavLink to="/armadio" className="menu-voce">
             <IconaGruccia dimensione={18} />
             <span className="testo-lungo">Il tuo armadio</span>
@@ -63,10 +67,15 @@ export default function Layout() {
               </button>
             </>
           ) : (
-            <NavLink to="/login" className="menu-voce">
-              <IconaUtente dimensione={18} />
-              <span>Accedi</span>
-            </NavLink>
+            <>
+              <NavLink to="/login" className="menu-voce">
+                <IconaUtente dimensione={18} />
+                <span>Accedi</span>
+              </NavLink>
+              <NavLink to="/registrati" className="menu-voce menu-iscriviti">
+                <span>Iscriviti</span>
+              </NavLink>
+            </>
           )}
         </nav>
       </header>
@@ -78,7 +87,7 @@ export default function Layout() {
           Regen <em>Luxury</em>
         </p>
         <p>Passaporto digitale dei capi rigenerati · prototipo di tesi, Politecnico di Bari</p>
-        <p className="piede-crediti">Foto decorative: Unsplash (licenza Unsplash) · I marchi citati appartengono ai rispettivi titolari</p>
+        <p className="piede-crediti">Foto decorative: Unsplash (licenza Unsplash) · I marchi citati appartengono ai rispettivi titolari · I capi del catalogo sono dati dimostrativi inventati</p>
       </footer>
     </div>
   );

@@ -32,6 +32,7 @@ npm run imposta-db           # chiede la password del database user di Atlas (na
                              # genera JWT_SECRET se manca e prova subito la connessione
 npm run crea-admin           # crea il tuo account (la password la scegli tu, nascosta); se l'email esiste la reimposta
 npm run popola-demo          # capi dimostrativi (vedi sotto); si può rilanciare
+npm run popola-archivio      # 216 capi di lusso inventati (1981-2025, 53 paesi) nel TUO database Atlas; vedi sotto
 
 # 1) Backend  (terminale 1, resta aperto)
 npm run dev                  # "MongoDB Atlas: connesso" + API su http://localhost:5001 (la 5000 su macOS è di AirPlay)
@@ -42,7 +43,7 @@ npm run web                  # http://localhost:5173  (le chiamate /api vanno al
 # 3) Test  (terminale 3, con il backend avviato)
 npm run passaggi             # Passaggi 1-8: email e password del TUO account, non quella del database
 npm run misura-tempi         # requisito P (< 2 s)
-npm test                     # 48 test automatici (database in memoria)
+npm test                     # 61 test automatici (database in memoria)
 ```
 
 Le password sono due e diverse: quella del *database user* di Atlas (sta solo nel `.env`, si imposta con
@@ -72,6 +73,21 @@ scritto nel campo **«Hai il codice del tag?»** della home, oppure si apre `…
 Chip NFC di prova (vettore NXP AN12196): `/s?e=EF963FF7828658A599F3041510671E88&c=94EED9EE65337086` apre il
 certificato di `DEMO-BORSA-01` **una sola volta**; poi risponde «Link già utilizzato» (anti-replay). Rilanciando
 `npm run popola-demo` il link torna valido.
+
+## Iscrizione e catalogo
+
+- **`/registrati`**: form di iscrizione per boutique/rivendite (ruolo `commerciante`) e laboratori artigiani (`artigiano`).
+  Nessuno può iscriversi come admin o brand manager. Password di almeno 10 caratteri con lettera e numero.
+  Variabili nel `.env`: `REGISTRAZIONE_APPROVAZIONE=1` (l'account resta disattivo finché un admin lo abilita),
+  `REGISTRAZIONE_CHIUSA=1` (iscrizioni chiuse), `RATE_LIMIT_REGISTER_PER_HOUR`.
+- **`/catalogo`**: archivio pubblico con statistiche, ricerca e filtri (brand, categoria, materiale, decennio).
+  Mostra solo i capi marcati `dimostrativo`: i capi veri non sono mai elencati, per non esporre i codici dei tag.
+- **`npm run popola-archivio`**: crea 216 capi dimostrativi di 47 maison, con materiali, anni, interventi e passaggi di
+  proprietà in tutto il mondo (dal 1981 a oggi). Passa dalle API vere, quindi ogni voce è ancorata sul registro e
+  verificabile. Dati e nomi di persone/laboratori sono inventati; i marchi citati appartengono ai rispettivi titolari.
+  Opzioni: `-- --prova` (nessuna scrittura), `-- --quanti 200`, `-- --email tua@email`, `-- --verifica-tutti`,
+  `-- --esporta archivio.json`. Si può rilanciare: salta i capi già creati. I tag usati restano occupati sul registro
+  anche se poi si cancellano i capi dal database.
 
 ## API principali
 
