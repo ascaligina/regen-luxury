@@ -1,6 +1,6 @@
 # Codice completo del progetto
 
-Esportato il 22/09/2026, 18:30:59 da `rl` — 121 file.
+Esportato il 30/09/2026, 23:53:20 da `https-github.com-tuo-utente-regen-luxury` — 129 file.
 
 ## Indice
 
@@ -20,8 +20,10 @@ Esportato il 22/09/2026, 18:30:59 da `rl` — 121 file.
 - `backend/config/db.js`
 - `backend/config/security.js`
 - `backend/controllers/authController.js`
+- `backend/controllers/catalogoController.js`
 - `backend/controllers/itemController.js`
 - `backend/controllers/verifyController.js`
+- `backend/data/archivio-lusso.js`
 - `backend/data/coefficienti-lca.json`
 - `backend/middleware/auth.js`
 - `backend/middleware/errorHandler.js`
@@ -32,6 +34,7 @@ Esportato il 22/09/2026, 18:30:59 da `rl` — 121 file.
 - `backend/models/User.js`
 - `backend/package.json`
 - `backend/routes/auth.js`
+- `backend/routes/catalogo.js`
 - `backend/routes/items.js`
 - `backend/routes/verify.js`
 - `backend/scripts/_cli.js`
@@ -42,6 +45,7 @@ Esportato il 22/09/2026, 18:30:59 da `rl` — 121 file.
 - `backend/scripts/misura-tempi.js`
 - `backend/scripts/passaggi.js`
 - `backend/scripts/passaggi.ps1`
+- `backend/scripts/popola-archivio.js`
 - `backend/scripts/popola-demo.js`
 - `backend/server.js`
 - `backend/services/anchorService.js`
@@ -54,10 +58,12 @@ Esportato il 22/09/2026, 18:30:59 da `rl` — 121 file.
 - `backend/services/qrService.js`
 - `backend/services/sunService.js`
 - `backend/test/auth.test.js`
+- `backend/test/catalogo.test.js`
 - `backend/test/hash.test.js`
 - `backend/test/helpers.js`
 - `backend/test/integrita.test.js`
 - `backend/test/items.test.js`
+- `backend/test/registrazione.test.js`
 - `backend/test/registro-mongo.test.js`
 - `backend/test/sun.test.js`
 - `backend/test/verify.test.js`
@@ -88,7 +94,7 @@ Esportato il 22/09/2026, 18:30:59 da `rl` — 121 file.
 - `frontend/package.json`
 - `frontend/public/favicon.svg`
 - `frontend/src/App.jsx`
-- `frontend/src/assets/fonts/OFL-cormorant-garamond.txt`
+- `frontend/src/assets/fonts/OFL-jost.txt`
 - `frontend/src/components/Ancoraggio.jsx`
 - `frontend/src/components/Carosello.jsx`
 - `frontend/src/components/Certificato.jsx`
@@ -103,6 +109,7 @@ Esportato il 22/09/2026, 18:30:59 da `rl` — 121 file.
 - `frontend/src/main.jsx`
 - `frontend/src/pages/AccountPage.jsx`
 - `frontend/src/pages/ArmadioPage.jsx`
+- `frontend/src/pages/CatalogoPage.jsx`
 - `frontend/src/pages/DashboardPage.jsx`
 - `frontend/src/pages/HomePage.jsx`
 - `frontend/src/pages/ItemDetailPage.jsx`
@@ -110,6 +117,7 @@ Esportato il 22/09/2026, 18:30:59 da `rl` — 121 file.
 - `frontend/src/pages/LoginPage.jsx`
 - `frontend/src/pages/NewItemPage.jsx`
 - `frontend/src/pages/NotFoundPage.jsx`
+- `frontend/src/pages/RegisterPage.jsx`
 - `frontend/src/pages/ScanPage.jsx`
 - `frontend/src/pages/SunPage.jsx`
 - `frontend/src/pages/UsersPage.jsx`
@@ -959,6 +967,13 @@ TRUST_PROXY=0
 # --- Limiti di richieste ---
 RATE_LIMIT_VERIFY_PER_MIN=120
 RATE_LIMIT_LOGIN_PER_15MIN=10
+RATE_LIMIT_REGISTER_PER_HOUR=8
+
+# --- Iscrizione dalla web app (commercianti e artigiani) ---
+# 1 = l'account nasce disattivo finché un admin non lo abilita (risposta 202)
+REGISTRAZIONE_APPROVAZIONE=0
+# 1 = iscrizione chiusa (risposta 403)
+REGISTRAZIONE_CHIUSA=0
 
 # --- Blockchain ---
 # mock    = registro simulato su file (nessun costo)
@@ -1002,6 +1017,7 @@ import { fileURLToPath } from "node:url";
 import itemsRouter from "./routes/items.js";
 import verifyRouter from "./routes/verify.js";
 import authRouter from "./routes/auth.js";
+import catalogoRouter from "./routes/catalogo.js";
 import { notFound, errorHandler } from "./middleware/errorHandler.js";
 
 const cartellaFrontend = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../frontend/dist");
@@ -1040,6 +1056,7 @@ export function creaApp() {
   app.use("/api/auth", authRouter());       // login e gestione account
   app.use("/api/items", itemsRouter);       // gestione capi (lato commerciante)
   app.use("/api/verify", verifyRouter());   // verifica pubblica (lato consumatore)
+  app.use("/api/catalogo", catalogoRouter()); // catalogo pubblico dell'archivio dimostrativo
   app.use("/api", notFound);
 
   // --- Web app React (se compilata): stesso dominio e stesso HTTPS delle API ---
@@ -1145,6 +1162,37 @@ export async function login(req, res, next) {
   }
 }
 
+/**
+ * Iscrizione autonoma dalla web app (commerciante o artigiano).
+ * - il ruolo è limitato dallo schema (mai admin / brand_manager);
+ * - con REGISTRAZIONE_APPROVAZIONE=1 l'account nasce disattivato e lo attiva un amministratore;
+ * - altrimenti restituisce subito il token, come un login.
+ */
+export async function registra(req, res, next) {
+  try {
+    const { password, email, ...resto } = req.dati.body;
+    if (process.env.REGISTRAZIONE_CHIUSA === "1") {
+      return res.status(403).json({ errore: "Le iscrizioni sono chiuse: chiedi a un amministratore di creare il tuo account." });
+    }
+    if (await User.exists({ email: email.toLowerCase() })) {
+      return res.status(409).json({ errore: "Esiste già un account con questa email: prova ad accedere." });
+    }
+    const conApprovazione = process.env.REGISTRAZIONE_APPROVAZIONE === "1";
+    const utente = await User.create({ ...resto, email, attivo: !conApprovazione, passwordHash: await bcrypt.hash(password, 12) });
+    if (conApprovazione) {
+      return res.status(202).json({
+        inAttesaDiApprovazione: true,
+        messaggio: "Iscrizione ricevuta. Un amministratore deve attivare il tuo account prima del primo accesso.",
+      });
+    }
+    const token = jwt.sign({ sub: String(utente._id), ruolo: utente.ruolo }, jwtSecret(), { expiresIn: jwtExpires() });
+    res.status(201).json({ token, utente: pubblico(utente) });
+  } catch (err) {
+    if (err.code === 11000) return res.status(409).json({ errore: "Esiste già un account con questa email: prova ad accedere." });
+    next(err);
+  }
+}
+
 export function me(req, res) {
   res.json({ utente: req.utente });
 }
@@ -1197,6 +1245,103 @@ export async function impostaAttivo(req, res, next) {
     utente.attivo = req.dati.body.attivo;
     await utente.save();
     res.json({ utente: pubblico(utente) });
+  } catch (err) {
+    next(err);
+  }
+}
+```
+
+## `backend/controllers/catalogoController.js`
+
+```javascript
+import Item from "../models/Item.js";
+
+/*
+ * Catalogo PUBBLICO dell'archivio dimostrativo.
+ * Espone solo i capi marcati "dimostrativo" (dati inventati per la demo): i capi
+ * reali non compaiono mai in un elenco pubblico, altrimenti chiunque potrebbe
+ * raccogliere i codici dei tag e provare a clonarli. Nessun dato personale:
+ * i nomi dei proprietari non sono inclusi.
+ */
+const escapeRegex = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+const SOLO_DEMO = { dimostrativo: true };
+
+export async function elencoCatalogo(req, res, next) {
+  try {
+    const { q, brand, categoria, materiale, decennio, pagina, perPagina } = req.dati.query;
+    const filtro = { ...SOLO_DEMO, stato: { $ne: "archiviato" } };
+    if (brand) filtro.brand = brand;
+    if (categoria) filtro.categoria = categoria;
+    if (materiale) filtro.materialePrincipale = materiale;
+    if (decennio) filtro.annoProduzione = { $gte: decennio, $lte: decennio + 9 };
+    if (q) {
+      const re = new RegExp(escapeRegex(q), "i");
+      filtro.$or = [{ brand: re }, { codiceModello: re }, { tagId: re }, { filieraProvenienza: re }];
+    }
+
+    const [capi, totale] = await Promise.all([
+      Item.find(filtro)
+        .select("tagId brand codiceModello categoria materialePrincipale annoProduzione filieraProvenienza storicoRigenerazione._id passaggiProprieta.luogo")
+        .sort({ annoProduzione: -1, brand: 1, tagId: 1 })
+        .skip((pagina - 1) * perPagina)
+        .limit(perPagina)
+        .lean(),
+      Item.countDocuments(filtro),
+    ]);
+    const dati = capi.map((c) => ({
+      tagId: c.tagId,
+      brand: c.brand,
+      codiceModello: c.codiceModello,
+      categoria: c.categoria,
+      materialePrincipale: c.materialePrincipale,
+      annoProduzione: c.annoProduzione,
+      filieraProvenienza: c.filieraProvenienza,
+      interventi: c.storicoRigenerazione?.length ?? 0,
+      passaggi: c.passaggiProprieta?.length ?? 0,
+      ultimoLuogo: c.passaggiProprieta?.at(-1)?.luogo ?? null,
+    }));
+    res.json({ dati, pagina, perPagina, totale, pagine: Math.max(1, Math.ceil(totale / perPagina)) });
+  } catch (err) {
+    next(err);
+  }
+}
+
+// Conta le occorrenze di un valore, dal più frequente (a parità, in ordine alfabetico)
+function contaPer(valori) {
+  const mappa = new Map();
+  for (const v of valori) if (v !== undefined && v !== null && v !== "") mappa.set(v, (mappa.get(v) ?? 0) + 1);
+  return [...mappa.entries()].sort((a, b) => b[1] - a[1] || String(a[0]).localeCompare(String(b[0]), "it"));
+}
+
+/**
+ * Statistiche dell'archivio dimostrativo. I conteggi sono calcolati in Node su un
+ * sottoinsieme minimo di campi: l'archivio dimostrativo conta poche centinaia di capi
+ * e il calcolo resta identico su qualsiasi versione di MongoDB.
+ */
+export async function statisticheCatalogo(req, res, next) {
+  try {
+    const capi = await Item.find(SOLO_DEMO)
+      .select("brand categoria materialePrincipale annoProduzione storicoRigenerazione._id passaggiProprieta.luogo")
+      .lean();
+
+    const anni = capi.map((c) => c.annoProduzione).filter(Number.isFinite);
+    // il paese è l'ultima parte di "Città, Paese" dei luoghi dei passaggi
+    const paesi = capi.flatMap((c) => (c.passaggiProprieta ?? []).map((p) => p.luogo?.split(",").at(-1).trim()));
+
+    res.json({
+      capi: capi.length,
+      interventi: capi.reduce((n, c) => n + (c.storicoRigenerazione?.length ?? 0), 0),
+      passaggi: capi.reduce((n, c) => n + (c.passaggiProprieta?.length ?? 0), 0),
+      annoMin: anni.length ? Math.min(...anni) : null,
+      annoMax: anni.length ? Math.max(...anni) : null,
+      brand: contaPer(capi.map((c) => c.brand)).map(([brand, n]) => ({ brand, capi: n })),
+      categorie: contaPer(capi.map((c) => c.categoria)).map(([categoria, n]) => ({ categoria, capi: n })),
+      materiali: contaPer(capi.map((c) => c.materialePrincipale)).map(([materiale, n]) => ({ materiale, capi: n })),
+      decenni: contaPer(anni.map((a) => a - (a % 10)))
+        .map(([decennio, n]) => ({ decennio, capi: n }))
+        .sort((a, b) => a.decennio - b.decennio),
+      paesi: contaPer(paesi).map(([paese, n]) => ({ paese, passaggi: n })),
+    });
   } catch (err) {
     next(err);
   }
@@ -1380,8 +1525,11 @@ export async function aggiungiPassaggioProprieta(req, res, next) {
     if (!item) return nonTrovato(res);
     if (item.stato === "archiviato") return archiviato(res);
 
+    const { proprietario, luogo, data } = req.dati.body;
     item.passaggiProprieta.push({
-      proprietario: req.dati.body.proprietario,
+      proprietario,
+      ...(luogo ? { luogo } : {}),
+      ...(data ? { data } : {}),
       registratoDa: req.utente.id,
       ancoraggio: { stato: "in_attesa", aggiornatoIl: new Date() },
     });
@@ -1502,17 +1650,20 @@ async function certificato(item) {
       materialePrincipale: item.materialePrincipale,
       annoProduzione: item.annoProduzione,
       stato: item.stato ?? "attivo",
+      dimostrativo: !!item.dimostrativo,
       storicoRigenerazione: item.storicoRigenerazione.map((e) => ({
         tipo: e.tipo,
         descrizione: e.descrizione,
         materialiNuovi: e.materialiNuovi,
         operatore: e.operatore,
+        luogo: e.luogo,
         data: e.data,
         ancoraggio: ancoraggioPubblico(e.ancoraggio),
       })),
       passaggiProprieta: item.passaggiProprieta.map((p, i) => ({
         passo: i + 1,
         proprietario: iniziali(p.proprietario),
+        luogo: p.luogo,
         data: p.data,
         ancoraggio: ancoraggioPubblico(p.ancoraggio),
       })),
@@ -1596,6 +1747,428 @@ export async function verificaSun(req, res, next) {
   } catch (err) {
     next(err);
   }
+}
+```
+
+## `backend/data/archivio-lusso.js`
+
+```javascript
+/*
+ * ARCHIVIO DIMOSTRATIVO — generatore dei capi di lusso per la demo.
+ *
+ * Produce sempre lo stesso insieme di capi (generatore pseudo-casuale con seme fisso),
+ * così lo script di popolamento è ripetibile. TUTTI I DATI SONO INVENTATI: i marchi sono
+ * citati a solo scopo illustrativo (i nomi appartengono ai rispettivi titolari, nessuna
+ * affiliazione), i proprietari e i laboratori non esistono, gli scambi e le date sono
+ * casuali. Nel database i capi sono marcati "dimostrativo: true" e il certificato lo dichiara.
+ *
+ * Copertura: 1980 → 2025, 47 maison di molti paesi, 11 categorie, scambi in tutti i continenti.
+ */
+
+// [categoria, modello, materialePrincipale, materialiOriginari]
+const BRAND = [
+  { n: "Hermès", s: "HER", f: ["Francia (Parigi)", "Francia (Pantin)", "Francia (Lione)"], a: [
+    ["borsa", "Borsa a mano in pelle Togo con cuciture a sella", "pelle", "Pelle di vitello Togo, filo di lino cerato, ferramenta placcata palladio"],
+    ["accessorio", "Carré in twill di seta stampato a mano", "seta", "Twill di seta 90 cm, bordi arrotolati a mano"],
+    ["borsa", "Borsa a spalla in pelle Box, chiusura a lucchetto", "pelle", "Pelle di vitello Box, fodera in capra"],
+  ] },
+  { n: "Chanel", s: "CHA", f: ["Francia (Parigi)", "Francia (Normandia)"], a: [
+    ["giacca", "Giacca in tweed bouclé con bottoni gioiello", "lana", "Tweed di lana e seta, fodera in seta con catenella di ancoraggio"],
+    ["borsa", "Borsa trapuntata matelassé a tracolla", "pelle", "Pelle d'agnello trapuntata, catena intrecciata in metallo"],
+    ["scarpe", "Décolleté bicolore con punta in pelle verniciata", "pelle", "Pelle di capretto beige, punta in vernice nera"],
+  ] },
+  { n: "Louis Vuitton", s: "LVT", f: ["Francia (Asnières)", "Francia (Parigi)", "Italia (Fiesso d'Artico)"], a: [
+    ["borsa", "Borsa a mano in tela monogram con bordi in vacchetta", "misto", "Tela spalmata, vacchetta naturale, ottone dorato"],
+    ["accessorio", "Portadocumenti rigido in pelle Epi", "pelle", "Pelle granata Epi, cuciture a filo di lino"],
+    ["altro", "Baule da viaggio in tela rinforzata con angolari in ottone", "misto", "Tela spalmata, legno di pioppo, ottone"],
+  ] },
+  { n: "Dior", s: "DIO", f: ["Francia (Parigi)", "Italia (Toscana)"], a: [
+    ["abito", "Abito da sera a corolla in taffetà di seta", "seta", "Taffetà di seta, tulle, crinolina in crine"],
+    ["giacca", "Giacca Bar in lana con vita segnata", "lana", "Lana fredda, imbottitura in crine, fodera in seta"],
+    ["borsa", "Borsa a mano in tela jacquard con pelle", "misto", "Jacquard di cotone, pelle d'agnello"],
+  ] },
+  { n: "Saint Laurent", s: "SLR", f: ["Francia (Parigi)", "Italia (Firenze)"], a: [
+    ["giacca", "Smoking a un petto in lana e mohair", "lana", "Lana e mohair, rever in raso di seta"],
+    ["borsa", "Borsa a tracolla in pelle con placca metallica", "pelle", "Pelle di vitello, ferramenta in ottone"],
+    ["camicia", "Camicia in crêpe de chine con fiocco al collo", "seta", "Crêpe de chine di seta"],
+  ] },
+  { n: "Givenchy", s: "GIV", f: ["Francia (Parigi)", "Italia (Veneto)"], a: [
+    ["abito", "Abito a tubino in cady di lana", "lana", "Cady di lana, fodera in viscosa"],
+    ["cappotto", "Cappotto scultura in doppia lana", "lana", "Doppia lana, bottoni ricoperti"],
+  ] },
+  { n: "Celine", s: "CEL", f: ["Francia (Parigi)", "Italia (Toscana)"], a: [
+    ["borsa", "Borsa a spalla in pelle liscia con chiusura a molla", "pelle", "Pelle di vitello, fodera in camoscio"],
+    ["camicia", "Camicia oversize in popeline di cotone", "cotone", "Popeline di cotone egiziano"],
+    ["cappotto", "Cappotto avvolgente in cashmere", "cashmere", "Cashmere doppio, fodera in cupro"],
+  ] },
+  { n: "Balenciaga", s: "BAL", f: ["Francia (Parigi)", "Spagna (Barcellona)", "Italia (Toscana)"], a: [
+    ["giacca", "Giacca scultorea a spalle arrotondate", "lana", "Gabardine di lana, imbottiture strutturali"],
+    ["borsa", "Borsa a mano in pelle morbida con borchie", "pelle", "Pelle di agnello, borchie in ottone anticato"],
+    ["scarpe", "Stivaletto in pelle con tacco scolpito", "pelle", "Pelle di vitello, suola in cuoio"],
+  ] },
+  { n: "Gucci", s: "GUC", f: ["Italia (Firenze)", "Italia (Scandicci)", "Italia (Toscana)"], a: [
+    ["borsa", "Borsa a mano in pelle con morsetto in bambù", "pelle", "Pelle di maiale, bambù lavorato a fuoco"],
+    ["scarpe", "Mocassino in pelle con morsetto in metallo", "pelle", "Pelle di vitello, morsetto placcato oro"],
+    ["accessorio", "Foulard in seta stampata a motivi floreali", "seta", "Twill di seta stampato"],
+  ] },
+  { n: "Prada", s: "PRA", f: ["Italia (Milano)", "Italia (Toscana)", "Italia (Valvigna)"], a: [
+    ["borsa", "Zaino in nylon tecnico con triangolo metallico", "nylon", "Nylon tecnico Re-Nylon, pelle, metallo"],
+    ["abito", "Abito in seta con taglio geometrico", "seta", "Gazar di seta"],
+    ["giacca", "Giacca in gabardine tecnico", "poliestere", "Gabardine di poliestere riciclato"],
+  ] },
+  { n: "Fendi", s: "FEN", f: ["Italia (Roma)", "Italia (Bagno a Ripoli)"], a: [
+    ["borsa", "Borsa a mano in pelle con doppia F", "pelle", "Pelle di vitello, ferramenta dorata"],
+    ["cappotto", "Cappotto reversibile in lana e shearling", "lana", "Lana cardata, shearling"],
+    ["accessorio", "Stola in seta e lana", "misto", "Seta e lana, frange annodate a mano"],
+  ] },
+  { n: "Bottega Veneta", s: "BOT", f: ["Italia (Vicenza)", "Italia (Veneto)"], a: [
+    ["borsa", "Borsa a mano in pelle intrecciata", "pelle", "Strisce di pelle di agnello intrecciate a mano"],
+    ["accessorio", "Pochette intrecciata senza fodera", "pelle", "Pelle di vitello intrecciata, chiusura a incastro"],
+    ["scarpe", "Sandalo in pelle con intreccio", "pelle", "Pelle di vitello, suola in cuoio"],
+  ] },
+  { n: "Valentino", s: "VAL", f: ["Italia (Roma)", "Italia (Como)"], a: [
+    ["abito", "Abito da sera rosso in crêpe di seta", "seta", "Crêpe di seta cady, fiocco in faille"],
+    ["cappotto", "Cappotto lungo in cashmere", "cashmere", "Cashmere pettinato"],
+    ["scarpe", "Décolleté con borchie piramidali", "pelle", "Pelle di vitello, borchie in metallo"],
+  ] },
+  { n: "Giorgio Armani", s: "ARM", f: ["Italia (Milano)", "Italia (Como)"], a: [
+    ["giacca", "Giacca destrutturata in lana fredda", "lana", "Lana fredda, fodera in viscosa"],
+    ["pantaloni", "Pantaloni a gamba larga in seta e lana", "misto", "Seta e lana"],
+    ["abito", "Abito da sera in chiffon di seta", "seta", "Chiffon di seta, paillettes"],
+  ] },
+  { n: "Versace", s: "VER", f: ["Italia (Milano)", "Italia (Como)"], a: [
+    ["camicia", "Camicia in seta stampata barocca", "seta", "Twill di seta stampato"],
+    ["abito", "Abito in maglia metallica", "altro", "Maglia metallica, fodera in seta"],
+    ["giacca", "Giacca doppiopetto con bottoni a medusa", "lana", "Lana fredda, bottoni in metallo"],
+  ] },
+  { n: "Dolce & Gabbana", s: "DGB", f: ["Italia (Milano)", "Italia (Sicilia)", "Italia (Como)"], a: [
+    ["abito", "Abito in pizzo con bustier", "misto", "Pizzo di cotone e seta"],
+    ["giacca", "Giacca sartoriale in lana mohair", "lana", "Lana e mohair, fodera in seta"],
+    ["gonna", "Gonna a ruota in broccato", "misto", "Broccato di seta e lurex"],
+  ] },
+  { n: "Salvatore Ferragamo", s: "FER", f: ["Italia (Firenze)", "Italia (Osmannoro)"], a: [
+    ["scarpe", "Décolleté in pelle con fiocco Vara", "pelle", "Pelle di vitello, suola in cuoio"],
+    ["accessorio", "Cintura reversibile con fibbia Gancini", "pelle", "Pelle di vitello, fibbia in ottone"],
+    ["borsa", "Borsa a mano in pelle con chiusura Gancini", "pelle", "Pelle di vitello, ferramenta placcata"],
+  ] },
+  { n: "Max Mara", s: "MAX", f: ["Italia (Reggio Emilia)", "Italia (Emilia-Romagna)"], a: [
+    ["cappotto", "Cappotto avvolgente in lana e cashmere", "cashmere", "Lana e cashmere, fodera in viscosa"],
+    ["giacca", "Giacca in cammello a un petto", "lana", "Pelo di cammello"],
+  ] },
+  { n: "Moncler", s: "MON", f: ["Italia (Lombardia)", "Romania (Sibiu)"], a: [
+    ["giacca", "Piumino corto trapuntato lucido", "nylon", "Nylon laqué, piumino d'oca 90/10"],
+    ["cappotto", "Piumino lungo con cappuccio", "nylon", "Nylon ripstop, piumino d'oca"],
+  ] },
+  { n: "Loro Piana", s: "LPI", f: ["Italia (Piemonte)", "Italia (Quarona)"], a: [
+    ["maglione", "Maglione girocollo in cashmere baby", "cashmere", "Cashmere di capra Hircus"],
+    ["giacca", "Giacca in vicuña e seta", "misto", "Vicuña, seta, fodera in cotone"],
+    ["pantaloni", "Pantaloni in lino e lana", "lino", "Lino e lana fredda"],
+  ] },
+  { n: "Brunello Cucinelli", s: "BCU", f: ["Italia (Solomeo)", "Italia (Umbria)"], a: [
+    ["maglione", "Cardigan in cashmere a coste", "cashmere", "Cashmere a doppio filo"],
+    ["camicia", "Camicia in lino stone-washed", "lino", "Lino lavato"],
+    ["giacca", "Giacca in camoscio leggero", "pelle", "Camoscio di agnello"],
+  ] },
+  { n: "Ermenegildo Zegna", s: "ZEG", f: ["Italia (Trivero)", "Italia (Piemonte)"], a: [
+    ["giacca", "Giacca in lana Trofeo", "lana", "Lana merino finissima"],
+    ["cappotto", "Cappotto in cashmere e seta", "cashmere", "Cashmere e seta"],
+    ["pantaloni", "Pantaloni in lana tropical", "lana", "Lana tropical"],
+  ] },
+  { n: "Tod's", s: "TOD", f: ["Italia (Marche)", "Italia (Brugnano)"], a: [
+    ["scarpe", "Mocassino Gommino in pelle con suola a 133 pallini", "pelle", "Pelle di vitello, gomma"],
+    ["borsa", "Borsa a mano in pelle morbida", "pelle", "Pelle di vitello lavata"],
+  ] },
+  { n: "Missoni", s: "MIS", f: ["Italia (Sumirago)", "Italia (Lombardia)"], a: [
+    ["maglione", "Cardigan a zig-zag in maglia", "misto", "Lana e viscosa, lavorazione a maglia"],
+    ["abito", "Abito lungo in maglia a onde", "viscosa", "Viscosa e lurex"],
+  ] },
+  { n: "Etro", s: "ETR", f: ["Italia (Milano)", "Italia (Como)"], a: [
+    ["camicia", "Camicia in seta stampata paisley", "seta", "Twill di seta stampato"],
+    ["accessorio", "Scialle in cashmere e seta paisley", "cashmere", "Cashmere e seta"],
+  ] },
+  { n: "Emilio Pucci", s: "PUC", f: ["Italia (Firenze)", "Italia (Como)"], a: [
+    ["abito", "Abito in jersey di seta stampato caleidoscopico", "seta", "Jersey di seta stampato"],
+    ["camicia", "Camicia in seta a stampa geometrica", "seta", "Twill di seta"],
+  ] },
+  { n: "Miu Miu", s: "MMI", da: 1993, f: ["Italia (Milano)", "Italia (Toscana)"], a: [
+    ["giacca", "Giacca corta in tweed con bottoni gioiello", "lana", "Tweed di lana"],
+    ["scarpe", "Ballerina in raso con cristalli", "altro", "Raso, cristalli Swarovski"],
+  ] },
+  { n: "Marni", s: "MAR", da: 1994, f: ["Italia (Milano)", "Italia (Toscana)"], a: [
+    ["abito", "Abito in popeline di cotone a stampa grafica", "cotone", "Popeline di cotone"],
+    ["borsa", "Borsa a mano in pelle colorata", "pelle", "Pelle di vitello"],
+  ] },
+  { n: "Burberry", s: "BUR", f: ["Regno Unito (Castleford)", "Regno Unito (Yorkshire)"], a: [
+    ["cappotto", "Trench doppiopetto in gabardine", "cotone", "Gabardine di cotone, fodera a quadri"],
+    ["accessorio", "Sciarpa in cashmere a quadri", "cashmere", "Cashmere pettinato"],
+    ["giacca", "Giacca trapuntata con collo in velluto", "misto", "Nylon cerato, imbottitura in poliestere"],
+  ] },
+  { n: "Alexander McQueen", s: "AMQ", da: 1992, f: ["Regno Unito (Londra)", "Italia (Toscana)"], a: [
+    ["abito", "Abito scultoreo in crêpe di lana", "lana", "Crêpe di lana, corsetto interno"],
+    ["giacca", "Giacca sartoriale dalla spalla affilata", "lana", "Lana fredda, fodera in seta"],
+    ["scarpe", "Sneaker in pelle con suola oversize", "pelle", "Pelle di vitello, gomma"],
+  ] },
+  { n: "Stella McCartney", s: "SMC", da: 2001, f: ["Italia (Veneto)", "Regno Unito (Londra)"], a: [
+    ["giacca", "Blazer in lana vegana certificata", "lana", "Lana riciclata certificata"],
+    ["borsa", "Borsa in materiale vegetale a base di mais", "altro", "Materiale vegetale, poliestere riciclato"],
+  ] },
+  { n: "Paul Smith", s: "PSM", f: ["Regno Unito (Nottingham)", "Italia (Toscana)"], a: [
+    ["camicia", "Camicia a righe multicolore in popeline", "cotone", "Popeline di cotone"],
+    ["giacca", "Giacca in lana con fodera a righe", "lana", "Lana pettinata"],
+  ] },
+  { n: "Loewe", s: "LOE", f: ["Spagna (Madrid)", "Spagna (Getafe)", "Spagna (Castiglia)"], a: [
+    ["borsa", "Borsa a mano a cuscino in pelle", "pelle", "Pelle di vitello nappa"],
+    ["accessorio", "Portafoglio in pelle con anagramma", "pelle", "Pelle di vitello"],
+    ["giacca", "Giacca in pelle scamosciata", "pelle", "Pelle di agnello scamosciata"],
+  ] },
+  { n: "Jil Sander", s: "JSA", f: ["Germania (Amburgo)", "Italia (Marche)"], a: [
+    ["camicia", "Camicia minimal in popeline", "cotone", "Popeline di cotone"],
+    ["cappotto", "Cappotto monopetto in lana", "lana", "Lana cardata"],
+  ] },
+  { n: "Issey Miyake", s: "ISM", f: ["Giappone (Tokyo)", "Giappone (Niigata)"], a: [
+    ["abito", "Abito plissettato in poliestere", "poliestere", "Poliestere termoplissettato"],
+    ["camicia", "Camicia in cotone con piegatura origami", "cotone", "Cotone lavorato"],
+  ] },
+  { n: "Comme des Garçons", s: "CDG", f: ["Giappone (Tokyo)", "Giappone (Kyoto)"], a: [
+    ["giacca", "Giacca decostruita in lana", "lana", "Lana cardata, cuciture a vista"],
+    ["camicia", "Camicia asimmetrica in cotone", "cotone", "Cotone compatto"],
+  ] },
+  { n: "Yohji Yamamoto", s: "YYA", f: ["Giappone (Tokyo)", "Giappone (Fukuoka)"], a: [
+    ["cappotto", "Cappotto nero oversize in lana", "lana", "Lana bouclé"],
+    ["pantaloni", "Pantaloni a gamba ampia in gabardine", "cotone", "Gabardine di cotone"],
+  ] },
+  { n: "Ralph Lauren Purple Label", s: "RLP", f: ["Stati Uniti (New York)", "Italia (Toscana)"], a: [
+    ["giacca", "Blazer in cashmere e seta", "cashmere", "Cashmere e seta"],
+    ["camicia", "Camicia button-down in oxford", "cotone", "Oxford di cotone"],
+  ] },
+  { n: "Tom Ford", s: "TFO", da: 2006, f: ["Italia (Veneto)", "Stati Uniti (New York)"], a: [
+    ["giacca", "Smoking in raso di seta", "seta", "Lana e seta, rever in raso"],
+    ["scarpe", "Mocassino in velluto con monogramma", "altro", "Velluto di cotone, pelle"],
+  ] },
+  { n: "Oscar de la Renta", s: "ODR", f: ["Stati Uniti (New York)", "Repubblica Dominicana (Santo Domingo)"], a: [
+    ["abito", "Abito da sera in tulle ricamato", "misto", "Tulle di seta, ricami a mano"],
+    ["gonna", "Gonna a ruota in taffetà", "seta", "Taffetà di seta"],
+  ] },
+  { n: "Carolina Herrera", s: "CHE", f: ["Stati Uniti (New York)", "Italia (Lombardia)"], a: [
+    ["camicia", "Camicia bianca in popeline con maniche ampie", "cotone", "Popeline di cotone"],
+    ["abito", "Abito in faille di seta con gonna a ruota", "seta", "Faille di seta"],
+  ] },
+  { n: "Goyard", s: "GOY", f: ["Francia (Parigi)", "Francia (Île-de-France)"], a: [
+    ["borsa", "Borsa tote in tela chevron con pelle", "misto", "Tela di lino e cotone, pelle di vitello"],
+    ["accessorio", "Portacarte in tela chevron dipinta a mano", "misto", "Tela spalmata, pelle"],
+  ] },
+  { n: "Lanvin", s: "LAN", f: ["Francia (Parigi)", "Italia (Toscana)"], a: [
+    ["abito", "Abito drappeggiato in raso di seta", "seta", "Raso di seta"],
+    ["scarpe", "Derby in pelle con suola sottile", "pelle", "Pelle di vitello"],
+  ] },
+  { n: "Chloé", s: "CLO", f: ["Francia (Parigi)", "Italia (Marche)"], a: [
+    ["abito", "Abito in georgette di seta con plissé", "seta", "Georgette di seta"],
+    ["borsa", "Borsa a tracolla in pelle con ferramenta dorata", "pelle", "Pelle di vitello"],
+  ] },
+  { n: "Balmain", s: "BLM", f: ["Francia (Parigi)", "Italia (Toscana)"], a: [
+    ["giacca", "Blazer doppiopetto con bottoni dorati", "lana", "Lana, bottoni dorati"],
+    ["abito", "Abito in jersey con spalle strutturate", "viscosa", "Jersey di viscosa"],
+  ] },
+  { n: "Kenzo", s: "KEN", f: ["Francia (Parigi)", "Giappone (Tokyo)"], a: [
+    ["maglione", "Maglione in lana con ricamo floreale", "lana", "Lana merino, ricamo a macchina"],
+    ["camicia", "Camicia in cotone a stampa tropicale", "cotone", "Cotone stampato"],
+  ] },
+  { n: "Jacquemus", s: "JAC", da: 2009, f: ["Francia (Parigi)", "Portogallo (Porto)"], a: [
+    ["borsa", "Borsa minuscola in pelle con manico rigido", "pelle", "Pelle di vitello"],
+    ["abito", "Abito corto scultoreo in viscosa", "viscosa", "Viscosa e acetato"],
+  ] },
+];
+
+const LUOGHI = [
+  // città di riferimento della moda (più frequenti: servono ai primi acquisti)
+  "Parigi, Francia", "Milano, Italia", "Londra, Regno Unito", "New York, Stati Uniti", "Tokyo, Giappone",
+  "Roma, Italia", "Firenze, Italia", "Ginevra, Svizzera", "Dubai, Emirati Arabi Uniti", "Hong Kong, Cina",
+  "Los Angeles, Stati Uniti", "Madrid, Spagna", "Monaco di Baviera, Germania", "Seul, Corea del Sud", "Singapore, Singapore",
+  // resto del mondo, in tutti i continenti
+  "Zurigo, Svizzera", "Vienna, Austria", "Bruxelles, Belgio", "Amsterdam, Paesi Bassi", "Copenaghen, Danimarca",
+  "Stoccolma, Svezia", "Oslo, Norvegia", "Helsinki, Finlandia", "Reykjavík, Islanda", "Lisbona, Portogallo",
+  "Atene, Grecia", "Praga, Repubblica Ceca", "Varsavia, Polonia", "Budapest, Ungheria", "Istanbul, Turchia",
+  "Mosca, Russia", "Dublino, Irlanda", "Edimburgo, Regno Unito", "Barcellona, Spagna", "Monaco, Principato di Monaco",
+  "Provenza, Francia", "Toscana, Italia", "Sicilia, Italia", "Puglia, Italia", "Catalogna, Spagna", "Baviera, Germania",
+  "Shanghai, Cina", "Pechino, Cina", "Osaka, Giappone", "Hokkaidō, Giappone", "Taipei, Taiwan", "Bangkok, Thailandia",
+  "Kuala Lumpur, Malesia", "Giacarta, Indonesia", "Manila, Filippine", "Hanoi, Vietnam", "Mumbai, India", "Nuova Delhi, India",
+  "Doha, Qatar", "Riad, Arabia Saudita", "Tel Aviv, Israele", "Il Cairo, Egitto", "Marrakech, Marocco", "Tunisi, Tunisia",
+  "Lagos, Nigeria", "Nairobi, Kenya", "Accra, Ghana", "Città del Capo, Sudafrica", "Johannesburg, Sudafrica",
+  "Toronto, Canada", "Montréal, Canada", "Vancouver, Canada", "Miami, Stati Uniti", "Chicago, Stati Uniti", "California, Stati Uniti",
+  "Città del Messico, Messico", "Bogotà, Colombia", "Lima, Perù", "Santiago, Cile", "Buenos Aires, Argentina", "São Paulo, Brasile",
+  "Rio de Janeiro, Brasile", "Sydney, Australia", "Melbourne, Australia", "Nuovo Galles del Sud, Australia", "Auckland, Nuova Zelanda",
+];
+const LUOGHI_PRIMI_ACQUISTI = LUOGHI.slice(0, 15);
+
+const LABORATORI = [
+  ["Atelier Rinnova", "Parigi, Francia"], ["Bottega Ferraris", "Milano, Italia"], ["Kintsugi Couture", "Kyoto, Giappone"],
+  ["Maison Reparo", "Bruxelles, Belgio"], ["Nordic Mend", "Copenaghen, Danimarca"], ["Taller Hilo de Oro", "Madrid, Spagna"],
+  ["Sartoria Levante", "Napoli, Italia"], ["Couture Revival", "New York, Stati Uniti"], ["Atelier Nomade", "Marrakech, Marocco"],
+  ["Studio Fil Doré", "Ginevra, Svizzera"], ["Re-Loom Workshop", "Londra, Regno Unito"], ["Oficina do Couro", "Lisbona, Portogallo"],
+  ["Seoul Stitch Lab", "Seul, Corea del Sud"], ["Jaipur Threadworks", "Jaipur, India"], ["Ateliê Renascer", "São Paulo, Brasile"],
+  ["Sydney Restoration Co.", "Sydney, Australia"], ["Pelletteria Artigiana Lecce", "Lecce, Italia"], ["Laboratorio Rinascita", "Bari, Italia"],
+  ["Maison Fil Rouge", "Lione, Francia"], ["Werkstatt Neuanfang", "Vienna, Austria"], ["Studio Kiyomi", "Tokyo, Giappone"],
+  ["Cape Mend & Co.", "Città del Capo, Sudafrica"], ["Hong Kong Needle Guild", "Hong Kong, Cina"], ["Toronto Heritage Tailors", "Toronto, Canada"],
+];
+
+const NOMI = ["Giulia", "Marco", "Laura", "Francesca", "Paolo", "Elena", "Luca", "Chiara", "Andrea", "Sofia", "Camille", "Louis", "Élodie",
+  "Hugo", "Charlotte", "James", "Eleanor", "Oliver", "Isabella", "Emma", "Michael", "Sarah", "Daniel", "Yuki", "Haruto", "Mei", "Wei", "Jin",
+  "Min-jun", "Aarav", "Priya", "Omar", "Leila", "Youssef", "Amara", "Kofi", "Thabo", "Ana", "Mateo", "Valentina", "Sebastián", "Lucía",
+  "Lars", "Astrid", "Freja", "Henrik", "Ingrid", "Noa", "Dmitri", "Anastasia", "Kwame", "Zara", "Sven", "Tomás", "Ines"];
+const COGNOMI = ["Conti", "Esposito", "Ricci", "De Santis", "Bianchi", "Moretti", "Romano", "Greco", "Fontana", "Marino", "Dubois", "Lefèvre",
+  "Moreau", "Laurent", "Bernard", "Smith", "Thompson", "Hughes", "Carter", "Bennett", "Nakamura", "Tanaka", "Watanabe", "Chen", "Wang", "Kim",
+  "Park", "Sharma", "Mehta", "Haddad", "Nasser", "Diallo", "Okafor", "Mensah", "Nkosi", "Silva", "Fernández", "Rojas", "Andersson", "Nielsen",
+  "Hansen", "Berg", "Kowalski", "Novak", "Petrov", "Ivanova", "Weber", "Schneider", "Lopes", "Costa", "Almeida", "Cohen"];
+const RIVENDITE = ["Casa del Ritorno", "Archivio Eleganza", "Bottega del Tempo", "Sala del Guardaroba", "Maison du Temps", "Salon Intemporel",
+  "The Second Chapter Boutique", "Guardaroba Sereno", "Empório Aurora", "Galleria Seconda Vita", "Atelier Memoria", "Vintage Nord Collection"];
+
+// Interventi plausibili per gruppo di prodotto: [descrizione, materiale nuovo]
+const EVENTI = {
+  riparazione: {
+    borse: [
+      ["Ricucitura dei manici e ritocco del colore sugli angoli", "Filo di lino cerato e tinture all'acqua"],
+      ["Fodera interna rifatta e lucidatura della ferramenta", "Cotone biologico e cera d'api"],
+      ["Sostituzione della cerniera e rinforzo delle cuciture laterali", "Cerniera in ottone di recupero"],
+    ],
+    scarpe: [
+      ["Risuolatura a mano e lucidatura della tomaia", "Cuoio conciato al vegetale"],
+      ["Rinforzo del contrafforte e ritocco del colore sulla punta", "Pelle di recupero e cere naturali"],
+    ],
+    tessile: [
+      ["Rammendo invisibile e rinforzo delle cuciture", "Filato di seta recuperato"],
+      ["Ricostruzione dell'orlo e stiratura a vapore", "Cotone riciclato"],
+      ["Sostituzione della fodera lacerata e fermatura dei bottoni", "Viscosa rigenerata certificata"],
+    ],
+  },
+  sostituzione_parti: {
+    borse: [
+      ["Nuova tracolla in pelle e moschettoni in ottone", "Pelle conciata al vegetale, ottone recuperato"],
+      ["Sostituzione della chiusura e dei rivetti", "Ottone di recupero"],
+    ],
+    scarpe: [
+      ["Nuova suola in cuoio e tacco rifatto", "Cuoio conciato al vegetale"],
+      ["Sostituzione della fibbia e delle fodere interne", "Ottone recuperato, pelle di capretto"],
+    ],
+    tessile: [
+      ["Bottoni sostituiti con bottoni in madreperla di recupero", "Madreperla di recupero"],
+      ["Colletto e polsini rifatti con tessuto originale di scorta", "Tessuto di giacenza originale"],
+      ["Nuova zip in metallo e fodera in seta", "Seta biologica, zip in ottone"],
+    ],
+  },
+  upcycling: {
+    borse: [
+      ["Trasformata in un modello più compatto con pelle di recupero", "Pelle di recupero"],
+      ["Pannelli originali riutilizzati per un nuovo accessorio abbinato", "Pannelli originali del capo"],
+    ],
+    scarpe: [["Tomaia rinnovata con pelle di recupero e nuova tintura naturale", "Pelle di recupero, tinture naturali"]],
+    tessile: [
+      ["Modello accorciato e rimodernato, con scampoli originali per i dettagli", "Scampoli originali del capo"],
+      ["Trasformato in un capo senza stagione con tinture naturali", "Tinture naturali"],
+    ],
+  },
+};
+
+const GRUPPO = { borsa: "borse", accessorio: "borse", altro: "borse", scarpe: "scarpe" }; // il resto è "tessile"
+
+// Generatore pseudo-casuale con seme (mulberry32): stesso seme, stessa sequenza
+function generatore(seme) {
+  let a = seme >>> 0;
+  return () => {
+    a = (a + 0x6d2b79f5) >>> 0;
+    let t = a;
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+const FINE = Date.UTC(2026, 7, 15); // tutte le date precedono il 15 agosto 2026: mai nel futuro
+const GIORNO = 86_400_000;
+
+export const NUMERO_CAPI_PREDEFINITO = 216;
+
+/** Restituisce `quanti` capi con eventi e passaggi di proprietà, ordinati per codice tag. */
+export function generaArchivio({ quanti = NUMERO_CAPI_PREDEFINITO, seme = 20260930 } = {}) {
+  const rnd = generatore(seme);
+  const scegli = (lista) => lista[Math.floor(rnd() * lista.length)];
+  const tra = (min, max) => min + Math.floor(rnd() * (max - min + 1));
+  const nomePersona = () => (rnd() < 0.3 ? scegli(RIVENDITE) : `${scegli(NOMI)} ${scegli(COGNOMI)}`);
+  const capi = [];
+
+  for (let i = 0; i < quanti; i++) {
+    const brand = BRAND[i % BRAND.length];
+    const [categoria, modello, materiale, materialiOriginari] = brand.a[(Math.floor(i / BRAND.length) + tra(0, 2)) % brand.a.length];
+
+    // anno di produzione 1980–2025, con più capi recenti
+    const annoMin = Math.max(1980, brand.da ?? 1980);
+    const anno = Math.min(2025, annoMin + Math.floor(rnd() ** 0.85 * (2025 - annoMin + 1)));
+    const inizio = Date.UTC(anno, tra(0, 11), tra(1, 28));
+    const eta = 2026 - anno;
+
+    // passaggi di proprietà: primo acquisto entro un anno dalla produzione, poi scambi distribuiti fino a oggi
+    const nPassaggi = Math.min(6, 1 + Math.floor(rnd() * Math.min(5.99, 1 + eta / 6)));
+    const primo = Math.min(inizio + tra(10, 330) * GIORNO, FINE - 120 * GIORNO);
+    const passaggi = [{ proprietario: nomePersona(), luogo: scegli(LUOGHI_PRIMI_ACQUISTI), data: primo }];
+    for (let k = 1; k < nPassaggi; k++) {
+      const da = primo + ((FINE - 60 * GIORNO - primo) * (k - 1)) / (nPassaggi - 1);
+      const a = primo + ((FINE - 60 * GIORNO - primo) * k) / (nPassaggi - 1);
+      passaggi.push({ proprietario: nomePersona(), luogo: scegli(LUOGHI), data: Math.round(da + (a - da) * (0.15 + rnd() * 0.8)) });
+    }
+
+    // interventi di rigenerazione (più probabili sui capi più anziani)
+    const nEventi = eta < 3 ? (rnd() < 0.2 ? 1 : 0) : Math.min(3, Math.floor(rnd() * (1 + Math.min(3, eta / 10))) + (rnd() < 0.35 ? 1 : 0));
+    const gruppo = GRUPPO[categoria] ?? "tessile";
+    const eventi = [];
+    for (let k = 0; k < nEventi; k++) {
+      const tipo = scegli(["riparazione", "riparazione", "sostituzione_parti", "upcycling"]);
+      const [operatore, luogoLab] = scegli(LABORATORI);
+      const data = primo + 90 * GIORNO + Math.floor(rnd() * Math.max(1, FINE - 30 * GIORNO - primo - 90 * GIORNO));
+      const [descrizione, materialiNuovi] = scegli(EVENTI[tipo][gruppo]);
+      eventi.push({
+        tipo,
+        descrizione,
+        materialiNuovi,
+        operatore,
+        luogo: luogoLab,
+        data: Math.min(data, FINE - 30 * GIORNO),
+      });
+    }
+    eventi.sort((x, y) => x.data - y.data);
+
+    const numero = String(i + 1).padStart(3, "0");
+    capi.push({
+      capo: {
+        tagId: `LUX-${brand.s}-${anno}-${numero}`,
+        brand: brand.n,
+        codiceModello: `${modello} (${brand.s}-${String(categoria).slice(0, 3).toUpperCase()}-${anno})`.slice(0, 100),
+        materialiOriginari,
+        filieraProvenienza: scegli(brand.f),
+        categoria,
+        materialePrincipale: materiale,
+        annoProduzione: anno,
+      },
+      eventi: eventi.map((e) => ({ ...e, data: new Date(e.data).toISOString() })),
+      passaggi: passaggi.map((p) => ({ ...p, data: new Date(p.data).toISOString() })),
+    });
+  }
+  return capi;
+}
+
+/** Riepilogo dell'archivio generato (per la modalità di prova e per il report). */
+export function riepilogoArchivio(capi) {
+  const conta = (valori) => [...valori.reduce((m, v) => m.set(v, (m.get(v) ?? 0) + 1), new Map())].sort((a, b) => b[1] - a[1]);
+  const paesi = capi.flatMap((c) => c.passaggi.map((p) => p.luogo.split(",").at(-1).trim()));
+  const anni = capi.map((c) => c.capo.annoProduzione);
+  return {
+    capi: capi.length,
+    brand: new Set(capi.map((c) => c.capo.brand)).size,
+    eventi: capi.reduce((n, c) => n + c.eventi.length, 0),
+    passaggi: capi.reduce((n, c) => n + c.passaggi.length, 0),
+    paesi: new Set(paesi).size,
+    annoMin: Math.min(...anni),
+    annoMax: Math.max(...anni),
+    primiPaesi: conta(paesi).slice(0, 8),
+  };
 }
 ```
 
@@ -1739,6 +2312,16 @@ export const limiteLogin = () =>
     legacyHeaders: false,
     message: risposta("Troppi tentativi di accesso: riprova tra 15 minuti."),
   });
+
+// Iscrizioni: poche per indirizzo IP (evita la creazione di account in massa)
+export const limiteRegistrazione = () =>
+  rateLimit({
+    windowMs: 60 * 60_000,
+    limit: Number(process.env.RATE_LIMIT_REGISTER_PER_HOUR ?? 8),
+    standardHeaders: "draft-7",
+    legacyHeaders: false,
+    message: risposta("Troppe iscrizioni da questo indirizzo: riprova più tardi."),
+  });
 ```
 
 ## `backend/middleware/valida.js`
@@ -1776,6 +2359,10 @@ export function valida({ body, query, params } = {}) {
 export const TIPI_EVENTO = ["riparazione", "upcycling", "sostituzione_parti"];
 
 export const RUOLI = ["admin", "brand_manager", "commerciante", "artigiano"];
+
+// Ruoli che una persona può scegliere da sola iscrivendosi dalla web app.
+// Brand manager e admin si ottengono solo da un amministratore (nessuna escalation).
+export const RUOLI_AUTOREGISTRAZIONE = ["commerciante", "artigiano"];
 
 export const CATEGORIE = [
   "giacca", "cappotto", "abito", "camicia", "t-shirt", "maglione",
@@ -1835,6 +2422,7 @@ const regenerationEventSchema = new mongoose.Schema(
     // Origine dei nuovi materiali ecologici impiegati (RF)
     materialiNuovi: { type: String },
     operatore: { type: String }, // Artigiano / Operatore di Laboratorio
+    luogo: { type: String, trim: true }, // città e paese dell'intervento (facoltativo)
     data: { type: Date, default: Date.now },
     registratoDa: { type: mongoose.Schema.Types.ObjectId, ref: "User" },
     ancoraggio: { type: ancoraggioSchema }, // assente sui dati creati prima della v2
@@ -1846,6 +2434,7 @@ const regenerationEventSchema = new mongoose.Schema(
 const passaggioSchema = new mongoose.Schema(
   {
     proprietario: { type: String, required: true },
+    luogo: { type: String, trim: true }, // dove è avvenuto il passaggio: "Città, Paese" (facoltativo)
     data: { type: Date, default: Date.now },
     registratoDa: { type: mongoose.Schema.Types.ObjectId, ref: "User" },
     ancoraggio: { type: ancoraggioSchema },
@@ -1868,6 +2457,9 @@ const itemSchema = new mongoose.Schema(
     materialePrincipale: { type: String, enum: MATERIALI },
     annoProduzione: { type: Number },
     stato: { type: String, enum: STATI_CAPO, default: "attivo" },
+    // true = capo di un archivio dimostrativo (dati inventati per la demo): si mostra
+    // un avviso nel certificato e compare nel catalogo pubblico. Non entra nell'impronta.
+    dimostrativo: { type: Boolean, default: false },
 
     // --- Accoppiamento hardware-software (RF: associazione smart tag) ---
     // Codice univoco del tag NFC/QR fisico. L'indice UNIQUE impedisce che lo
@@ -1899,6 +2491,7 @@ const itemSchema = new mongoose.Schema(
 );
 
 itemSchema.index({ brand: 1, codiceModello: 1 });
+itemSchema.index({ dimostrativo: 1, brand: 1 });
 
 export default mongoose.model("Item", itemSchema);
 ```
@@ -1952,6 +2545,7 @@ export default mongoose.model("User", userSchema);
     "misura-tempi": "node scripts/misura-tempi.js",
     "crea-admin": "node scripts/crea-admin.js",
     "popola-demo": "node scripts/popola-demo.js",
+    "popola-archivio": "node scripts/popola-archivio.js",
     "migra": "node scripts/migra-ancoraggi.js"
   },
   "dependencies": {
@@ -1980,16 +2574,17 @@ export default mongoose.model("User", userSchema);
 ```javascript
 import express from "express";
 import { z } from "zod";
-import { login, me, cambiaPassword, creaUtente, elencaUtenti, impostaAttivo } from "../controllers/authController.js";
+import { login, registra, me, cambiaPassword, creaUtente, elencaUtenti, impostaAttivo } from "../controllers/authController.js";
 import { autentica, richiediRuolo } from "../middleware/auth.js";
 import { valida } from "../middleware/valida.js";
-import { limiteLogin } from "../middleware/limiti.js";
+import { limiteLogin, limiteRegistrazione } from "../middleware/limiti.js";
 import * as schemi from "../validators/schemi.js";
 
 export default function authRouter() {
   const router = express.Router();
 
   router.post("/login", limiteLogin(), valida({ body: schemi.login }), login);
+  router.post("/registrazione", limiteRegistrazione(), valida({ body: schemi.registrazione }), registra);
   router.get("/me", autentica, me);
   router.post("/password", autentica, valida({ body: schemi.cambioPassword }), cambiaPassword);
 
@@ -2004,6 +2599,25 @@ export default function authRouter() {
     impostaAttivo
   );
 
+  return router;
+}
+```
+
+## `backend/routes/catalogo.js`
+
+```javascript
+import express from "express";
+import { elencoCatalogo, statisticheCatalogo } from "../controllers/catalogoController.js";
+import { valida } from "../middleware/valida.js";
+import { limiteVerifica } from "../middleware/limiti.js";
+import * as schemi from "../validators/schemi.js";
+
+// Catalogo pubblico dell'archivio dimostrativo (nessun login, con limite di richieste per IP)
+export default function catalogoRouter() {
+  const router = express.Router();
+  router.use(limiteVerifica());
+  router.get("/statistiche", statisticheCatalogo);
+  router.get("/", valida({ query: schemi.filtriCatalogo }), elencoCatalogo);
   return router;
 }
 ```
@@ -2763,6 +3377,170 @@ Write-Host ""
 if ($script:Falliti -eq 0) { Write-Host "TUTTI I CONTROLLI SUPERATI" -ForegroundColor Green } else { Write-Host "CONTROLLI FALLITI: $script:Falliti" -ForegroundColor Red; exit 1 }
 ```
 
+## `backend/scripts/popola-archivio.js`
+
+```javascript
+/*
+ * ARCHIVIO DIMOSTRATIVO — popola il database (Atlas) con 216 capi di lusso d'epoca e di oggi.
+ * Uso:  npm run popola-archivio                          (dalla cartella principale o da backend/)
+ *       npm run popola-archivio -- --email tua@email.it  (capi creati a nome di quell'account)
+ *       npm run popola-archivio -- --quanti 50           (solo i primi 50)
+ *       npm run popola-archivio -- --prova               (mostra il riepilogo senza toccare il database)
+ *       npm run popola-archivio -- --esporta archivio.json (salva i dati generati in un file)
+ *       npm run popola-archivio -- --verifica-tutti      (al termine verifica ogni capo, non un campione)
+ * I capi vengono creati con le stesse API della web app (validazione, ancoraggio sulla blockchain
+ * simulata, controllo di integrità) a nome del primo amministratore attivo, poi marcati
+ * "dimostrativo". Lo script si può rilanciare: i capi già presenti vengono saltati.
+ * TUTTI I DATI SONO INVENTATI (marchi citati a solo scopo illustrativo, persone e laboratori
+ * inesistenti, scambi e date casuali tra il 1980 e oggi): si veda data/archivio-lusso.js.
+ * Nota: sulla blockchain un tag registrato non si cancella; i capi possono essere eliminati
+ * dal database ma i loro codici tag restano "bruciati" nel registro.
+ */
+import "dotenv/config";
+import fs from "node:fs/promises";
+import jwt from "jsonwebtoken";
+import mongoose from "mongoose";
+import { connectDB, spiegaErroreMongo } from "../config/db.js";
+import { jwtSecret } from "../config/security.js";
+import { creaApp } from "../app.js";
+import { attendiAncoraggi, inLavorazione } from "../services/anchorService.js";
+import User from "../models/User.js";
+import Item from "../models/Item.js";
+import { generaArchivio, riepilogoArchivio, NUMERO_CAPI_PREDEFINITO } from "../data/archivio-lusso.js";
+import { colore, chiamata, attendi } from "./_cli.js";
+
+const argomento = (nome) => {
+  const i = process.argv.indexOf(`--${nome}`);
+  return i > -1 ? process.argv[i + 1] : undefined;
+};
+const opzione = (nome) => process.argv.includes(`--${nome}`);
+
+const quanti = Number(argomento("quanti") ?? NUMERO_CAPI_PREDEFINITO);
+if (!Number.isInteger(quanti) || quanti < 1 || quanti > 1000) {
+  console.error(colore.rosso("--quanti deve essere un numero intero tra 1 e 1000."));
+  process.exit(1);
+}
+const archivio = generaArchivio({ quanti });
+const r = riepilogoArchivio(archivio);
+console.log(
+  `Archivio generato: ${r.capi} capi · ${r.brand} maison · ${r.passaggi} passaggi di proprietà in ${r.paesi} paesi · ${r.eventi} interventi · ${r.annoMin}–${r.annoMax}`
+);
+
+if (argomento("esporta")) {
+  await fs.writeFile(argomento("esporta"), JSON.stringify(archivio, null, 2));
+  console.log(colore.verde(`Dati salvati in ${argomento("esporta")}`));
+}
+if (opzione("prova") || argomento("esporta")) process.exit(0);
+
+// Il registro simulato vive nel database (condiviso con il sito online); latenza ridotta per velocizzare
+if ((process.env.BLOCKCHAIN_MODE ?? "mock") === "mock") process.env.MOCK_LEDGER_STORE = "mongo";
+process.env.MOCK_CHAIN_LATENCY_MS ??= "20";
+process.env.RATE_LIMIT_VERIFY_PER_MIN = "100000"; // server temporaneo di questo processo: nessun limite alle verifiche dello script
+
+try {
+  await connectDB();
+} catch (err) {
+  console.error(colore.rosso(`Database non raggiungibile: ${spiegaErroreMongo(err)}`));
+  process.exit(1);
+}
+
+const email = argomento("email")?.trim().toLowerCase();
+const autore = await User.findOne(email ? { email } : { ruolo: "admin", attivo: true }).sort({ createdAt: 1 });
+if (!autore) {
+  console.error(colore.rosso(email ? `Nessun account con email ${email}.` : "Nessun amministratore: crealo prima con npm run crea-admin"));
+  await mongoose.disconnect();
+  process.exit(1);
+}
+console.log(`Capi creati a nome di ${autore.nome} (${autore.ruolo})`);
+
+// Stesse API della web app, su un server temporaneo in questo processo
+const server = creaApp().listen(0, "127.0.0.1");
+await new Promise((resolve) => server.once("listening", resolve));
+const base = `http://127.0.0.1:${server.address().port}/api`;
+const token = jwt.sign({ sub: String(autore._id), ruolo: autore.ruolo }, jwtSecret(), { expiresIn: "3h" });
+const api = async (metodo, percorso, corpo) => {
+  const risposta = await chiamata(base, metodo, percorso, { corpo, token });
+  if (risposta.status >= 400 && !(metodo === "GET" && risposta.status === 404)) {
+    const dettagli = risposta.dati?.dettagli?.map((d) => `${d.campo}: ${d.messaggio}`).join("; ");
+    throw new Error(`${metodo} ${percorso}: HTTP ${risposta.status} ${risposta.dati?.errore ?? ""} ${dettagli ?? ""}`.trim());
+  }
+  return risposta;
+};
+
+const inizio = Date.now();
+const contatori = { creati: 0, saltati: 0, errori: 0, fatti: 0 };
+const coda = [...archivio];
+const parallelismo = Math.min(Math.max(Number(argomento("concorrenza") ?? 3), 1), 6);
+
+// Una scrittura alla volta per capo: attende che l'ancoraggio in background della precedente sia concluso,
+// così due aggiornamenti dello stesso documento non si sovrappongono mai.
+const attendiCapo = async (id) => {
+  while (inLavorazione(id)) await attendi(5);
+};
+
+async function elabora({ capo, eventi, passaggi }) {
+  try {
+    if ((await api("GET", `/items/tag/${capo.tagId}`)).status === 200) {
+      await Item.updateOne({ tagId: capo.tagId }, { $set: { dimostrativo: true } });
+      contatori.saltati++;
+      return;
+    }
+    const { dati } = await api("POST", "/items", capo);
+    await attendiCapo(dati._id);
+    // prima i passaggi e gli interventi in ordine cronologico: l'ancoraggio segue l'ordine di invio
+    const voci = [
+      ...passaggi.map((p) => ({ p, data: p.data })),
+      ...eventi.map((e) => ({ e, data: e.data })),
+    ].sort((a, b) => Date.parse(a.data) - Date.parse(b.data));
+    for (const voce of voci) {
+      if (voce.p) await api("POST", `/items/${dati._id}/proprieta`, voce.p);
+      else await api("POST", `/items/${dati._id}/eventi`, voce.e);
+      await attendiCapo(dati._id);
+    }
+    await Item.updateOne({ _id: dati._id }, { $set: { dimostrativo: true } });
+    contatori.creati++;
+  } catch (err) {
+    contatori.errori++;
+    console.error(colore.rosso(`  ✗ ${capo.tagId}: ${err.message}`));
+  } finally {
+    contatori.fatti++;
+    if (contatori.fatti % 10 === 0 || contatori.fatti === archivio.length) {
+      const secondi = Math.round((Date.now() - inizio) / 1000);
+      console.log(`  ${contatori.fatti}/${archivio.length} capi elaborati (${secondi}s)`);
+    }
+  }
+}
+
+console.log(`Creo i capi (${parallelismo} alla volta)…`);
+await Promise.all(Array.from({ length: parallelismo }, async () => {
+  while (coda.length) await elabora(coda.shift());
+}));
+
+console.log("Attendo le conferme della blockchain…");
+await attendiAncoraggi();
+
+// Verifica di integrità: un campione (o tutti con --verifica-tutti) deve risultare "verificato"
+const tag = archivio.map((c) => c.capo.tagId);
+const campione = opzione("verifica-tutti") ? tag : tag.filter((_, i) => i % Math.ceil(tag.length / 25) === 0);
+const esiti = {};
+for (const t of campione) {
+  const v = await api("GET", `/verify/${t}`);
+  const stato = v.dati?.certificatoAutenticita?.integrita?.stato ?? `HTTP ${v.status}`;
+  esiti[stato] = (esiti[stato] ?? 0) + 1;
+}
+const statistiche = (await api("GET", "/catalogo/statistiche")).dati;
+
+console.log(`\nCapi creati: ${contatori.creati} · già presenti: ${contatori.saltati} · errori: ${contatori.errori}`);
+console.log(`Verifica su ${campione.length} capi: ${Object.entries(esiti).map(([s, n]) => `${n} ${s}`).join(", ")}`);
+console.log(`Catalogo pubblico: ${statistiche.capi} capi · ${statistiche.passaggi} passaggi · ${statistiche.interventi} interventi · ${statistiche.paesi.length} paesi`);
+console.log(`Durata: ${Math.round((Date.now() - inizio) / 1000)} secondi`);
+console.log(colore.verde("Fatto. Apri la web app → Catalogo per vederli."));
+
+server.close();
+await mongoose.disconnect();
+process.exit(contatori.errori || Object.keys(esiti).some((s) => s !== "verificato") ? 1 : 0);
+```
+
 ## `backend/scripts/popola-demo.js`
 
 ```javascript
@@ -3127,11 +3905,20 @@ function ancoraVoce(itemId, voceId, { campo, improntaDi, invia }) {
     } catch (err) {
       esito = fallito(hash, err);
     }
-    const aggiornato = await Item.findById(itemId);
-    const daAggiornare = aggiornato?.[campo].id(voceId);
-    if (!daAggiornare) return;
-    daAggiornare.ancoraggio = esito;
-    await aggiornato.save();
+    // Se nel frattempo è arrivata un'altra scrittura sullo stesso capo (es. un nuovo evento), il save()
+    // fallisce per conflitto di versione: senza un nuovo tentativo la voce resterebbe "in attesa".
+    for (let tentativo = 1; ; tentativo++) {
+      const aggiornato = await Item.findById(itemId);
+      const daAggiornare = aggiornato?.[campo].id(voceId);
+      if (!daAggiornare) return; // voce cancellata nel frattempo
+      daAggiornare.ancoraggio = esito;
+      try {
+        await aggiornato.save();
+        return;
+      } catch (err) {
+        if (err.name !== "VersionError" || tentativo >= 6) throw err;
+      }
+    }
   });
 }
 
@@ -3552,6 +4339,7 @@ export function improntaEvento(evento) {
     descrizione: evento.descrizione,
     materialiNuovi: evento.materialiNuovi,
     operatore: evento.operatore,
+    luogo: evento.luogo, // assente sui dati precedenti: normalizza() lo omette, l'impronta non cambia
     data: evento.data ? new Date(evento.data) : null,
   });
 }
@@ -3564,6 +4352,7 @@ export function improntaPassaggio(passaggio) {
     tipo: "passaggio",
     id: String(passaggio._id),
     proprietario: passaggio.proprietario,
+    luogo: passaggio.luogo,
     data: passaggio.data ? new Date(passaggio.data) : null,
   });
 }
@@ -3912,6 +4701,97 @@ describe("Autenticazione e ruoli (punto 7)", () => {
 });
 ```
 
+## `backend/test/catalogo.test.js`
+
+```javascript
+import { describe, it, before, after } from "node:test";
+import assert from "node:assert/strict";
+import request from "supertest";
+import { avviaAmbiente, creaUtenti, auth, capoDiProva, attendiAncoraggi } from "./helpers.js";
+
+describe("Passaggi con data e luogo, catalogo pubblico dell'archivio dimostrativo", () => {
+  let env, app, token, Item;
+  before(async () => {
+    env = await avviaAmbiente();
+    app = env.app;
+    token = await creaUtenti(app);
+    ({ default: Item } = await import("../models/Item.js"));
+  });
+  after(() => env.chiudi());
+
+  it("un passaggio può avere data passata e luogo, e il capo resta 'verificato'", async () => {
+    const c = await request(app).post("/api/items").set(auth(token.commerciante)).send(capoDiProva("CAT-001", { annoProduzione: 1985 }));
+    assert.equal(c.status, 201);
+    const p = await request(app)
+      .post(`/api/items/${c.body._id}/proprieta`)
+      .set(auth(token.commerciante))
+      .send({ proprietario: "Anna Rossi", luogo: "Tokyo, Giappone", data: "1990-05-12" });
+    assert.equal(p.status, 200);
+    await attendiAncoraggi();
+    const v = await request(app).get("/api/verify/CAT-001");
+    assert.equal(v.status, 200);
+    assert.equal(v.body.certificatoAutenticita.integrita.stato, "verificato");
+    assert.equal(v.body.capo.passaggiProprieta[0].luogo, "Tokyo, Giappone");
+    assert.equal(new Date(v.body.capo.passaggiProprieta[0].data).getUTCFullYear(), 1990);
+    assert.equal(v.body.capo.passaggiProprieta[0].proprietario, "A. R."); // il nome non è pubblico
+  });
+
+  it("data del passaggio nel futuro o anteriore al 1900 -> 400", async () => {
+    const c = await Item.findOne({ tagId: "CAT-001" });
+    const url = `/api/items/${c._id}/proprieta`;
+    assert.equal((await request(app).post(url).set(auth(token.commerciante)).send({ proprietario: "X", data: "2999-01-01" })).status, 400);
+    assert.equal((await request(app).post(url).set(auth(token.commerciante)).send({ proprietario: "X", data: "1850-01-01" })).status, 400);
+  });
+
+  it("la modifica del luogo nel database viene rilevata come manomissione", async () => {
+    await Item.updateOne({ tagId: "CAT-001" }, { $set: { "passaggiProprieta.0.luogo": "Atlantide" } });
+    const v = await request(app).get("/api/verify/CAT-001");
+    assert.equal(v.body.certificatoAutenticita.integrita.stato, "manomesso");
+  });
+
+  it("il catalogo pubblico mostra solo i capi dimostrativi e nessun nome di proprietario", async () => {
+    for (const [tag, brand, anno] of [["CAT-D1", "Hermès", 1988], ["CAT-D2", "Chanel", 1994], ["CAT-D3", "Hermès", 2003]]) {
+      const c = await request(app).post("/api/items").set(auth(token.commerciante)).send(capoDiProva(tag, { brand, annoProduzione: anno, categoria: "borsa", materialePrincipale: "pelle" }));
+      await request(app).post(`/api/items/${c.body._id}/proprieta`).set(auth(token.commerciante)).send({ proprietario: "Mario Verdi", luogo: "Parigi, Francia", data: `${anno + 2}-03-01` });
+      await attendiAncoraggi(); // il flag si imposta a scritture concluse, come fa lo script di popolamento
+      await Item.updateOne({ _id: c.body._id }, { $set: { dimostrativo: true } });
+    }
+
+    const r = await request(app).get("/api/catalogo");
+    assert.equal(r.status, 200);
+    assert.equal(r.body.totale, 3);
+    assert.ok(!r.body.dati.some((d) => d.tagId === "CAT-001"), "il capo non dimostrativo non deve comparire");
+    assert.ok(!JSON.stringify(r.body).includes("Mario"), "nessun nome di proprietario");
+    assert.equal(r.body.dati[0].passaggi, 1);
+    assert.equal(r.body.dati[0].ultimoLuogo, "Parigi, Francia");
+
+    const filtrato = await request(app).get("/api/catalogo?brand=Hermès&decennio=1980");
+    assert.equal(filtrato.body.totale, 1);
+    assert.equal(filtrato.body.dati[0].tagId, "CAT-D1");
+    assert.equal((await request(app).get("/api/catalogo?q=chanel")).body.totale, 1);
+    assert.equal((await request(app).get("/api/catalogo?categoria=inesistente")).status, 400);
+  });
+
+  it("le statistiche riassumono l'archivio dimostrativo", async () => {
+    const r = await request(app).get("/api/catalogo/statistiche");
+    assert.equal(r.status, 200);
+    assert.equal(r.body.capi, 3);
+    assert.equal(r.body.passaggi, 3);
+    assert.equal(r.body.annoMin, 1988);
+    assert.equal(r.body.annoMax, 2003);
+    assert.deepEqual(r.body.brand[0], { brand: "Hermès", capi: 2 });
+    assert.deepEqual(r.body.paesi, [{ paese: "Francia", passaggi: 3 }]);
+    assert.deepEqual(r.body.decenni.map((d) => d.decennio), [1980, 1990, 2000]);
+  });
+
+  it("il certificato segnala che il capo è dimostrativo", async () => {
+    const v = await request(app).get("/api/verify/CAT-D1");
+    assert.equal(v.body.capo.dimostrativo, true);
+    assert.equal((await request(app).get("/api/verify/CAT-001")).body.capo.dimostrativo, false);
+  });
+});
+```
+
 ## `backend/test/hash.test.js`
 
 ```javascript
@@ -3962,6 +4842,7 @@ export async function avviaAmbiente(env = {}) {
     MOCK_CHAIN_LATENCY_MS: "5",
     RATE_LIMIT_VERIFY_PER_MIN: "10000",
     RATE_LIMIT_LOGIN_PER_15MIN: "10000",
+    RATE_LIMIT_REGISTER_PER_HOUR: "10000",
     PUBLIC_BASE_URL: "https://regen.example",
     ...env,
   });
@@ -4280,6 +5161,106 @@ describe("Gestione capi: creazione, validazione, endpoint (punti 8-9)", () => {
 });
 ```
 
+## `backend/test/registrazione.test.js`
+
+```javascript
+import { describe, it, before, after } from "node:test";
+import assert from "node:assert/strict";
+import request from "supertest";
+import { avviaAmbiente, auth, capoDiProva, attendiAncoraggi } from "./helpers.js";
+
+const nuova = (extra = {}) => ({
+  nome: "Sartoria Nuova",
+  email: "nuova@sartoria.it",
+  password: "una-password-lunga-1",
+  ruolo: "artigiano",
+  organizzazione: "Sartoria Nuova Srl",
+  ...extra,
+});
+
+describe("Iscrizione autonoma dalla web app", () => {
+  let env, app;
+  before(async () => {
+    env = await avviaAmbiente();
+    app = env.app;
+  });
+  after(() => env.chiudi());
+
+  it("si iscrive, riceve subito il token e può usare l'area gestionale", async () => {
+    const r = await request(app).post("/api/auth/registrazione").send(nuova());
+    assert.equal(r.status, 201);
+    assert.ok(r.body.token);
+    assert.equal(r.body.utente.ruolo, "artigiano");
+    assert.equal(r.body.utente.passwordHash, undefined);
+    assert.equal((await request(app).get("/api/auth/me").set(auth(r.body.token))).status, 200);
+    const login = await request(app).post("/api/auth/login").send({ email: "nuova@sartoria.it", password: "una-password-lunga-1" });
+    assert.equal(login.status, 200);
+  });
+
+  it("non si può diventare admin o brand manager da soli (niente escalation di privilegi)", async () => {
+    for (const ruolo of ["admin", "brand_manager"]) {
+      const r = await request(app).post("/api/auth/registrazione").send(nuova({ email: `${ruolo}@x.it`, ruolo }));
+      assert.equal(r.status, 400, ruolo);
+    }
+    const extra = await request(app).post("/api/auth/registrazione").send(nuova({ email: "extra@x.it", attivo: true }));
+    assert.equal(extra.status, 400); // campi non previsti rifiutati
+  });
+
+  it("email già usata -> 409; password debole o email non valida -> 400", async () => {
+    assert.equal((await request(app).post("/api/auth/registrazione").send(nuova())).status, 409);
+    assert.equal((await request(app).post("/api/auth/registrazione").send(nuova({ email: "a@b.it", password: "corta1" }))).status, 400);
+    assert.equal((await request(app).post("/api/auth/registrazione").send(nuova({ email: "b@b.it", password: "solo-lettere-lunghe" }))).status, 400);
+    assert.equal((await request(app).post("/api/auth/registrazione").send(nuova({ email: "non-una-email" }))).status, 400);
+  });
+
+  it("il nuovo commerciante può creare un capo; l'artigiano no", async () => {
+    const com = await request(app).post("/api/auth/registrazione").send(nuova({ email: "com@x.it", ruolo: "commerciante" }));
+    assert.equal(com.status, 201);
+    const ok = await request(app).post("/api/items").set(auth(com.body.token)).send(capoDiProva("REG-001"));
+    assert.equal(ok.status, 201);
+    const art = await request(app).post("/api/auth/login").send({ email: "nuova@sartoria.it", password: "una-password-lunga-1" });
+    assert.equal((await request(app).post("/api/items").set(auth(art.body.token)).send(capoDiProva("REG-002"))).status, 403);
+    await attendiAncoraggi();
+  });
+
+  it("con REGISTRAZIONE_APPROVAZIONE=1 l'account resta disattivato finché non lo attiva un admin", async () => {
+    process.env.REGISTRAZIONE_APPROVAZIONE = "1";
+    try {
+      const r = await request(app).post("/api/auth/registrazione").send(nuova({ email: "attesa@x.it" }));
+      assert.equal(r.status, 202);
+      assert.equal(r.body.token, undefined);
+      const login = await request(app).post("/api/auth/login").send({ email: "attesa@x.it", password: "una-password-lunga-1" });
+      assert.equal(login.status, 401);
+    } finally {
+      delete process.env.REGISTRAZIONE_APPROVAZIONE;
+    }
+  });
+
+  it("con REGISTRAZIONE_CHIUSA=1 le iscrizioni sono rifiutate (403)", async () => {
+    process.env.REGISTRAZIONE_CHIUSA = "1";
+    try {
+      assert.equal((await request(app).post("/api/auth/registrazione").send(nuova({ email: "chiusa@x.it" }))).status, 403);
+    } finally {
+      delete process.env.REGISTRAZIONE_CHIUSA;
+    }
+  });
+
+  it("le iscrizioni sono limitate per indirizzo IP (429)", async () => {
+    process.env.RATE_LIMIT_REGISTER_PER_HOUR = "2";
+    try {
+      const limitata = env.creaApp();
+      const codici = [];
+      for (let i = 0; i < 3; i++) {
+        codici.push((await request(limitata).post("/api/auth/registrazione").send(nuova({ email: `lim${i}@x.it` }))).status);
+      }
+      assert.deepEqual(codici, [201, 201, 429]);
+    } finally {
+      process.env.RATE_LIMIT_REGISTER_PER_HOUR = "10000";
+    }
+  });
+});
+```
+
 ## `backend/test/registro-mongo.test.js`
 
 ```javascript
@@ -4540,7 +5521,7 @@ describe("Verifica pubblica, integrità e limiti (punti 8, 10, 13)", () => {
 ```javascript
 // Validazione dei dati in ingresso (requisito R: nessun dato malformato nel database).
 import { z } from "zod";
-import { TIPI_EVENTO, RUOLI, CATEGORIE, MATERIALI, STATI_CAPO, TAG_REGEX } from "../models/costanti.js";
+import { TIPI_EVENTO, RUOLI, RUOLI_AUTOREGISTRAZIONE, CATEGORIE, MATERIALI, STATI_CAPO, TAG_REGEX } from "../models/costanti.js";
 
 const testo = (max) => z.string().trim().min(1, "Campo obbligatorio").max(max, `Massimo ${max} caratteri`);
 const testoOpzionale = (max) => z.string().trim().max(max, `Massimo ${max} caratteri`).optional();
@@ -4560,6 +5541,23 @@ export const nuovoUtente = z.object({
   ruolo: z.enum(RUOLI),
   organizzazione: testoOpzionale(150),
 });
+
+// Iscrizione autonoma: niente ruolo admin/brand_manager, nessun campo extra
+export const registrazione = z
+  .object({
+    nome: testo(100),
+    email: z.string().trim().email("Email non valida").max(150),
+    password: z
+      .string()
+      .min(10, "La password deve avere almeno 10 caratteri")
+      .max(200)
+      .refine((p) => /[A-Za-z]/.test(p) && /\d/.test(p), "La password deve contenere almeno una lettera e un numero"),
+    ruolo: z.enum(RUOLI_AUTOREGISTRAZIONE, {
+      errorMap: () => ({ message: `Il ruolo deve essere uno tra: ${RUOLI_AUTOREGISTRAZIONE.join(", ")}` }),
+    }),
+    organizzazione: testoOpzionale(150),
+  })
+  .strict();
 
 export const cambioPassword = z.object({
   vecchia: z.string().min(1).max(200),
@@ -4609,6 +5607,7 @@ export const nuovoEvento = z
     descrizione: testo(1000),
     materialiNuovi: testoOpzionale(300),
     operatore: testoOpzionale(100),
+    luogo: testoOpzionale(120),
     data: z.coerce
       .date()
       .refine((d) => d.getTime() <= Date.now() + 60_000, "La data non può essere nel futuro")
@@ -4616,7 +5615,28 @@ export const nuovoEvento = z
   })
   .strict();
 
-export const nuovoPassaggio = z.object({ proprietario: testo(100) }).strict();
+export const nuovoPassaggio = z
+  .object({
+    proprietario: testo(100),
+    luogo: testoOpzionale(120),
+    // data del passaggio (se omessa: adesso); utile per ricostruire la storia di un capo d'epoca
+    data: z.coerce
+      .date()
+      .refine((d) => d.getFullYear() >= 1900, "Data non valida")
+      .refine((d) => d.getTime() <= Date.now() + 60_000, "La data non può essere nel futuro")
+      .optional(),
+  })
+  .strict();
+
+export const filtriCatalogo = z.object({
+  q: z.string().trim().max(100).optional(),
+  brand: z.string().trim().max(100).optional(),
+  categoria: z.enum(CATEGORIE).optional(),
+  materiale: z.enum(MATERIALI).optional(),
+  decennio: z.coerce.number().int().min(1980).max(2020).optional(),
+  pagina: z.coerce.number().int().min(1).default(1),
+  perPagina: z.coerce.number().int().min(1).max(60).default(24),
+});
 
 export const filtriElenco = z.object({
   q: z.string().trim().max(100).optional(),
@@ -5116,7 +6136,7 @@ Per la demo o per la stampa si possono sostituire con foto proprie: basta cambia
 
 ## Font
 
-**Cormorant Garamond** (titoli), Copyright 2015 The Cormorant Project Authors, **SIL Open Font License 1.1**.
+**Jost** (titoli e testi), Copyright 2020 The Jost Project Authors, **SIL Open Font License 1.1**.
 File `.woff2` (sottoinsieme latino) e testo della licenza in `frontend/src/assets/fonts/`.
 ```
 
@@ -5675,7 +6695,7 @@ dist/
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-    <meta name="theme-color" content="#1c1b19" />
+    <meta name="theme-color" content="#26242a" />
     <meta name="description" content="Verifica l'autenticità e la storia di un capo di lusso rigenerato." />
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <title>Regen Luxury — Passaporto digitale del capo</title>
@@ -5716,7 +6736,7 @@ dist/
 ## `frontend/public/favicon.svg`
 
 ```xml
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><rect width="64" height="64" rx="14" fill="#1c1b19"/><path d="M20 44V20h13a8 8 0 0 1 0 16h-6l11 8" fill="none" stroke="#c9a25c" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" xmlns:c2pa="http://c2pa.org/manifest"><metadata><c2pa:manifest>AAAWgmp1bWIAAAAeanVtZGMycGEAEQAQgAAAqgA4m3EDYzJwYQAAABZcanVtYgAAAEdqdW1kYzJtYQARABCAAACqADibcQN1cm46YzJwYTozNmM4NDAxNC04OTI5LTQ5YjEtODlhNC1hZTMyMGYxNDcwNDAAAAADl2p1bWIAAAApanVtZGMyYXMAEQAQgAAAqgA4m3EDYzJwYS5hc3NlcnRpb25zAAAAALxqdW1iAAAARGp1bWRjYm9yABEAEIAAAKoAOJtxE2MycGEuaW5ncmVkaWVudC52MwAAAAAYYzJzaJc3hzqK1QOhLrevWD7Xxc0AAABwY2JvcqNpZGM6Zm9ybWF0bWltYWdlL3N2Zyt4bWxqaW5zdGFuY2VJRHgseG1wOmlpZDo4MjcyZTQwMC02MjBiLTRjOTAtYTM0Mi0yOWY4NWU0NWU4NjJscmVsYXRpb25zaGlwaHBhcmVudE9mAAAB4mp1bWIAAABBanVtZGNib3IAEQAQgAAAqgA4m3ETYzJwYS5hY3Rpb25zLnYyAAAAABhjMnNovONdy4UJm5hD3MYqBg056wAAAZljYm9yomdhY3Rpb25zgqJmYWN0aW9ua2MycGEub3BlbmVkanBhcmFtZXRlcnOha2luZ3JlZGllbnRzgaJjdXJseC1zZWxmI2p1bWJmPWMycGEuYXNzZXJ0aW9ucy9jMnBhLmluZ3JlZGllbnQudjNkaGFzaFggEPAOJOUhX+e3gC/YeWnmtSyrylLn98pLhuEc89vm8kqkZmFjdGlvbngdY29tLmFudGhyb3BpYy5jbGF1ZGUucHJvdmlkZWRqcGFyYW1ldGVyc6F4H2NvbS5hbnRocm9waWMub3JpZ2luLWNvbmZpZGVuY2VndW5rbm93bmtkZXNjcmlwdGlvbnhmQ2xhdWRlIHByb3ZpZGVkIHRoaXMgZmlsZSBhdCB0aGUgcmVxdWVzdCBvZiBhIHVzZXIgYW5kIG1heSBoYXZlIGNyZWF0ZWQgb3IgbW9kaWZpZWQgdGhlIGZpbGUgY29udGVudHMubXNvZnR3YXJlQWdlbnShZG5hbWVmQ2xhdWRlcmFsbEFjdGlvbnNJbmNsdWRlZPUAAADIanVtYgAAAEBqdW1kY2JvcgARABCAAACqADibcRNjMnBhLmhhc2guZGF0YQAAAAAYYzJzaN9AfWZW/bhtXlH4POiIBmEAAACAY2JvcqVjYWxnZnNoYTI1NmNwYWRNAAAAAAAAAAAAAAAAAGRoYXNoWCBPceUMBsJsz34S7ifDlj7kGEuYiqmBRpP5nO5LEs6nXmRuYW1lbmp1bWJmIG1hbmlmZXN0amV4Y2x1c2lvbnOBomVzdGFydBh7Zmxlbmd0aBkeBAAAAj5qdW1iAAAAJ2p1bWRjMmNsABEAEIAAAKoAOJtxA2MycGEuY2xhaW0udjIAAAACD2Nib3KlY2FsZ2ZzaGEyNTZpc2lnbmF0dXJleE1zZWxmI2p1bWJmPS9jMnBhL3VybjpjMnBhOjM2Yzg0MDE0LTg5MjktNDliMS04OWE0LWFlMzIwZjE0NzA0MC9jMnBhLnNpZ25hdHVyZWppbnN0YW5jZUlEeCx4bXA6aWlkOmQ4Yjg3NDUwLTYwNGMtNDUyNi1hNmY3LTg1NmRkZTc0MGFhZnJjcmVhdGVkX2Fzc2VydGlvbnODomN1cmx4LXNlbGYjanVtYmY9YzJwYS5hc3NlcnRpb25zL2MycGEuaW5ncmVkaWVudC52M2RoYXNoWCAQ8A4k5SFf57eAL9h5aea1LKvKUuf3ykuG4Rzz2+bySqJjdXJseCpzZWxmI2p1bWJmPWMycGEuYXNzZXJ0aW9ucy9jMnBhLmFjdGlvbnMudjJkaGFzaFggqhgDrYdTmjW2RWK+yVAhPN4Q7TOQwkzkF8vcU8Bo0iuiY3VybHgpc2VsZiNqdW1iZj1jMnBhLmFzc2VydGlvbnMvYzJwYS5oYXNoLmRhdGFkaGFzaFggr519v+bYhdaP+dvUEEKJrTffEHkzsN2HugbjYZONjjV0Y2xhaW1fZ2VuZXJhdG9yX2luZm+jZG5hbWVvQW50aHJvcGljIEZpbGVzZ3ZlcnNpb25lMS4wLjBrc3BlY1ZlcnNpb25lMi40LjAAABA4anVtYgAAAChqdW1kYzJjcwARABCAAACqADibcQNjMnBhLnNpZ25hdHVyZQAAABAIY2JvctKEWQISogEmGCFZAgowggIGMIIBjaADAgECAhRA5aAK7sI50L64g/oGQgU9Z1UTADAKBggqhkjOPQQDAzBJMRcwFQYDVQQKEw5BbnRocm9waWMsIFBCQzEuMCwGA1UEAxMlQW50aHJvcGljIENvbnRlbnQgQ3JlZGVudGlhbHMgUm9vdCBDQTAeFw0yNjA4MDcxODQzNTZaFw0yODA4MDYxOTQzNTZaMEQxFzAVBgNVBAoTDkFudGhyb3BpYywgUEJDMSkwJwYDVQQDEyBBbnRocm9waWMgQ2xhdWRlIENvbnRlbnQgU2lnbmluZzBZMBMGByqGSM49AgEGCCqGSM49AwEHA0IABJh6CmvLUBgFFNU0vUKlOVtE6djd17L5SuwX0LemFisBM3dkd/3cyjxFA3Qo5S46fX0/ihY0VZ7mfb9KF703t5OjWDBWMA4GA1UdDwEB/wQEAwIHgDAVBgNVHSUEDjAMBgorBgEEAYPoXgIBMAwGA1UdEwEB/wQCMAAwHwYDVR0jBBgwFoAUzlHiBIFOZFsj+OPEz5o+nMHXXMIwCgYIKoZIzj0EAwMDZwAwZAIwMXMdFJ4BetLLVY7ORuE9noqbbAZOZn/aArXyTwFAZfKrPzxF2vPoJNf1+UCdg1XGAjBwX1zd9WGqYkqmL5SFqw1QySjr1zJfpJM9+1rdDwSPLMOPOjKuiXjoU/pUUeG9RwmhY3BhZFkNngAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAPZYQAJBbD/yizDh0rhLxdmGZn4e6iQvkJ/0nhn4k+obixa2wBTvi2nizWn7Ni6OV8G2YoVAqIMNo8aqERYktrO1HFA=</c2pa:manifest></metadata><rect width="64" height="64" rx="14" fill="#1c1b19"/><path d="M20 44V20h13a8 8 0 0 1 0 16h-6l11 8" fill="none" stroke="#c9a25c" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"/></svg>
 ```
 
 ## `frontend/src/App.jsx`
@@ -5731,6 +6751,8 @@ import VerifyPage from "./pages/VerifyPage.jsx";
 import SunPage from "./pages/SunPage.jsx";
 import ScanPage from "./pages/ScanPage.jsx";
 import LoginPage from "./pages/LoginPage.jsx";
+import RegisterPage from "./pages/RegisterPage.jsx";
+import CatalogoPage from "./pages/CatalogoPage.jsx";
 import DashboardPage from "./pages/DashboardPage.jsx";
 import NewItemPage from "./pages/NewItemPage.jsx";
 import ItemDetailPage from "./pages/ItemDetailPage.jsx";
@@ -5749,7 +6771,9 @@ export default function App() {
         <Route path="s" element={<SunPage />} />
         <Route path="scan" element={<ScanPage />} />
         <Route path="armadio" element={<ArmadioPage />} />
+        <Route path="catalogo" element={<CatalogoPage />} />
         <Route path="login" element={<LoginPage />} />
+        <Route path="registrati" element={<RegisterPage />} />
 
         {/* Area gestionale (commercianti, artigiani, brand manager) */}
         <Route path="gestione" element={<Protetta />}>
@@ -5772,10 +6796,10 @@ export default function App() {
 }
 ```
 
-## `frontend/src/assets/fonts/OFL-cormorant-garamond.txt`
+## `frontend/src/assets/fonts/OFL-jost.txt`
 
 ```text
-Copyright 2015 The Cormorant Project Authors (github.com/CatharsisFonts/Cormorant) CormorantGaramond-Italic[wght].ttf: Copyright 2015 The Cormorant Project Authors (github.com/CatharsisFonts/Cormorant)
+Copyright 2020 The Jost Project Authors (https://github.com/indestructible-type/Jost) Jost-Italic[wght].ttf: Copyright 2020 The Jost Project Authors (https://github.com/indestructible-type/Jost)
 
 This Font Software is licensed under the SIL Open Font License, Version 1.1.
 This license is copied below, and is also available with a FAQ at:
@@ -6061,6 +7085,11 @@ export default function Certificato({ dati }) {
         </p>
       </header>
 
+      {capo.dimostrativo && (
+        <p className="avviso-demo">
+          Capo dimostrativo: storia, luoghi e proprietari sono inventati per la demo della piattaforma. Il marchio citato appartiene al rispettivo titolare e non ha alcun legame con questo progetto.
+        </p>
+      )}
       <Esito certificato={cert} nfc={nfc} />
       <AzioniArmadio dati={dati} />
 
@@ -6098,7 +7127,10 @@ export default function Certificato({ dati }) {
           <ol className="linea-tempo">
             {capo.storicoRigenerazione.map((e, i) => (
               <li key={i}>
-                <span className="linea-data">{data(e.data)}</span>
+                <span className="linea-data">
+                  {data(e.data)}
+                  {e.luogo && ` · ${e.luogo}`}
+                </span>
                 <strong>{TIPI_EVENTO[e.tipo] ?? e.tipo}</strong>
                 <p>{e.descrizione}</p>
                 {e.materialiNuovi && <p className="nota">Materiali: {e.materialiNuovi}</p>}
@@ -6121,7 +7153,11 @@ export default function Certificato({ dati }) {
                 <span className="passo">{p.passo}</span>
                 <span>
                   <strong>{p.proprietario}</strong>
-                  <span className="nota"> · {data(p.data)}</span>
+                  <span className="nota">
+                    {" "}
+                    · {data(p.data)}
+                    {p.luogo && ` · ${p.luogo}`}
+                  </span>
                 </span>
                 <Ancoraggio ancoraggio={p.ancoraggio} />
               </li>
@@ -6233,6 +7269,20 @@ export const IconaFreccia = (p) => (
     <path d="M5 12h14M13 6l6 6-6 6" />
   </Base>
 );
+export const IconaCatalogo = (p) => (
+  <Base {...p}>
+    <rect x="4" y="4" width="7" height="7" rx="1" />
+    <rect x="13" y="4" width="7" height="7" rx="1" />
+    <rect x="4" y="13" width="7" height="7" rx="1" />
+    <rect x="13" y="13" width="7" height="7" rx="1" />
+  </Base>
+);
+export const IconaMondo = (p) => (
+  <Base {...p}>
+    <circle cx="12" cy="12" r="8.5" />
+    <path d="M3.5 12h17M12 3.5c2.5 2.5 3.5 5.5 3.5 8.5s-1 6-3.5 8.5c-2.5-2.5-3.5-5.5-3.5-8.5s1-6 3.5-8.5z" />
+  </Base>
+);
 ```
 
 ## `frontend/src/components/Layout.jsx`
@@ -6243,7 +7293,7 @@ import { Link, NavLink, Outlet, useLocation, useNavigate } from "react-router-do
 import { useAuth } from "../hooks/useAuth.jsx";
 import { useArmadio } from "../utils/archivio.js";
 import StoricoMenu from "./StoricoMenu.jsx";
-import { IconaGruccia, IconaScansione, IconaUtente } from "./Icone.jsx";
+import { IconaGruccia, IconaScansione, IconaUtente, IconaCatalogo } from "./Icone.jsx";
 
 export default function Layout() {
   const { utente, logout } = useAuth();
@@ -6278,6 +7328,10 @@ export default function Layout() {
             <IconaScansione dimensione={18} />
             <span>Verifica</span>
           </NavLink>
+          <NavLink to="/catalogo" className="menu-voce">
+            <IconaCatalogo dimensione={18} />
+            <span>Catalogo</span>
+          </NavLink>
           <NavLink to="/armadio" className="menu-voce">
             <IconaGruccia dimensione={18} />
             <span className="testo-lungo">Il tuo armadio</span>
@@ -6303,10 +7357,15 @@ export default function Layout() {
               </button>
             </>
           ) : (
-            <NavLink to="/login" className="menu-voce">
-              <IconaUtente dimensione={18} />
-              <span>Accedi</span>
-            </NavLink>
+            <>
+              <NavLink to="/login" className="menu-voce">
+                <IconaUtente dimensione={18} />
+                <span>Accedi</span>
+              </NavLink>
+              <NavLink to="/registrati" className="menu-voce menu-iscriviti">
+                <span>Iscriviti</span>
+              </NavLink>
+            </>
           )}
         </nav>
       </header>
@@ -6318,7 +7377,7 @@ export default function Layout() {
           Regen <em>Luxury</em>
         </p>
         <p>Passaporto digitale dei capi rigenerati · prototipo di tesi, Politecnico di Bari</p>
-        <p className="piede-crediti">Foto decorative: Unsplash (licenza Unsplash) · I marchi citati appartengono ai rispettivi titolari</p>
+        <p className="piede-crediti">Foto decorative: Unsplash (licenza Unsplash) · I marchi citati appartengono ai rispettivi titolari · I capi del catalogo sono dati dimostrativi inventati</p>
       </footer>
     </div>
   );
@@ -6668,6 +7727,16 @@ export function AuthProvider({ children }) {
     return d.utente;
   }, []);
 
+  // Iscrizione autonoma: con l'approvazione attiva non c'è subito il token (risposta 202)
+  const registra = useCallback(async (campi) => {
+    const d = await api("/auth/registrazione", { metodo: "POST", corpo: campi });
+    if (d.token) {
+      token.salva(d.token);
+      setUtente(d.utente);
+    }
+    return d;
+  }, []);
+
   const logout = useCallback(() => {
     token.cancella();
     setUtente(null);
@@ -6676,7 +7745,7 @@ export function AuthProvider({ children }) {
   // L'amministratore può tutto; gli altri solo i ruoli indicati
   const puo = useCallback((...ruoli) => !!utente && (utente.ruolo === "admin" || ruoli.includes(utente.ruolo)), [utente]);
 
-  return <AuthContext.Provider value={{ utente, pronto, login, logout, puo }}>{children}</AuthContext.Provider>;
+  return <AuthContext.Provider value={{ utente, pronto, login, registra, logout, puo }}>{children}</AuthContext.Provider>;
 }
 
 export const useAuth = () => useContext(AuthContext);
@@ -6866,6 +7935,247 @@ export default function ArmadioPage() {
 }
 ```
 
+## `frontend/src/pages/CatalogoPage.jsx`
+
+```jsx
+import { useEffect, useMemo, useState } from "react";
+import { Link, useSearchParams } from "react-router-dom";
+import { api } from "../services/api.js";
+import { Caricamento, Errore } from "../components/Stato.jsx";
+import { CATEGORIE, MATERIALI, maiuscola, numero } from "../utils/formato.js";
+
+const DECENNI = [1980, 1990, 2000, 2010, 2020];
+
+// Barre orizzontali: un solo colore, valore scritto accanto (nessuna legenda da decifrare)
+function Barre({ titolo, righe, nota }) {
+  const massimo = Math.max(1, ...righe.map((r) => r.valore));
+  return (
+    <figure className="barre">
+      <figcaption>{titolo}</figcaption>
+      <ol>
+        {righe.map((r) => (
+          <li key={r.etichetta}>
+            <span className="barre-etichetta">{r.etichetta}</span>
+            <span className="barre-pista" aria-hidden="true">
+              <span className="barre-riempimento" style={{ width: `${(r.valore / massimo) * 100}%` }} />
+            </span>
+            <span className="barre-valore">{numero(r.valore, 0)}</span>
+          </li>
+        ))}
+      </ol>
+      {nota && <p className="nota">{nota}</p>}
+    </figure>
+  );
+}
+
+function Statistiche({ s }) {
+  const decenni = DECENNI.map((d) => ({ etichetta: `Anni ${d}`, valore: s.decenni.find((x) => x.decennio === d)?.capi ?? 0 }));
+  const paesi = s.paesi.slice(0, 8).map((p) => ({ etichetta: p.paese, valore: p.passaggi }));
+  return (
+    <section className="statistiche" aria-label="Numeri dell’archivio">
+      <dl className="numeri">
+        <div>
+          <dt>Capi</dt>
+          <dd>{numero(s.capi, 0)}</dd>
+        </div>
+        <div>
+          <dt>Maison</dt>
+          <dd>{numero(s.brand.length, 0)}</dd>
+        </div>
+        <div>
+          <dt>Passaggi di proprietà</dt>
+          <dd>{numero(s.passaggi, 0)}</dd>
+        </div>
+        <div>
+          <dt>Paesi</dt>
+          <dd>{numero(s.paesi.length, 0)}</dd>
+        </div>
+      </dl>
+      <div className="grafici">
+        <Barre titolo="Capi per decennio di produzione" righe={decenni} />
+        <Barre titolo="Dove sono passati di mano" righe={paesi} nota={s.paesi.length > 8 ? `Primi 8 paesi su ${s.paesi.length}.` : undefined} />
+      </div>
+    </section>
+  );
+}
+
+export default function CatalogoPage() {
+  const [parametri, setParametri] = useSearchParams();
+  const f = useMemo(
+    () => ({
+      q: parametri.get("q") ?? "",
+      brand: parametri.get("brand") ?? "",
+      categoria: parametri.get("categoria") ?? "",
+      materiale: parametri.get("materiale") ?? "",
+      decennio: parametri.get("decennio") ?? "",
+      pagina: Number(parametri.get("pagina") ?? 1),
+    }),
+    [parametri]
+  );
+  const [ricerca, setRicerca] = useState(f.q);
+  const [stat, setStat] = useState(null);
+  const [risultato, setRisultato] = useState({ caricamento: true });
+
+  useEffect(() => {
+    api("/catalogo/statistiche").then(setStat).catch(() => setStat(null));
+  }, []);
+
+  useEffect(() => {
+    const query = new URLSearchParams({ pagina: String(f.pagina), perPagina: "24" });
+    for (const k of ["q", "brand", "categoria", "materiale", "decennio"]) if (f[k]) query.set(k, f[k]);
+    setRisultato((r) => ({ ...r, caricamento: true }));
+    api(`/catalogo?${query}`)
+      .then((dati) => setRisultato({ dati }))
+      .catch((errore) => setRisultato({ errore }));
+  }, [f]);
+
+  const aggiorna = (nuovi) => {
+    const p = new URLSearchParams(parametri);
+    for (const [k, v] of Object.entries({ pagina: "", ...nuovi })) v ? p.set(k, v) : p.delete(k);
+    setParametri(p);
+  };
+  const filtriAttivi = ["q", "brand", "categoria", "materiale", "decennio"].some((k) => f[k]);
+
+  return (
+    <section className="catalogo">
+      <header className="pagina-testa">
+        <p className="sopratitolo">Archivio dimostrativo</p>
+        <h1>Catalogo dei capi</h1>
+        <p className="pagina-intro">
+          Capi di lusso dal 1980 a oggi, con interventi di rigenerazione e passaggi di proprietà in tutto il mondo. Sono dati inventati per provare la
+          piattaforma: ogni scheda si apre come un vero certificato, verificato sulla blockchain.
+        </p>
+      </header>
+
+      {stat && stat.capi > 0 && <Statistiche s={stat} />}
+
+      <form
+        className="modulo filtri-catalogo"
+        onSubmit={(e) => {
+          e.preventDefault();
+          aggiorna({ q: ricerca.trim() });
+        }}
+      >
+        <label className="filtro-ricerca">
+          Cerca
+          <input value={ricerca} onChange={(e) => setRicerca(e.target.value)} placeholder="Maison, modello, codice o filiera" />
+        </label>
+        <label>
+          Maison
+          <select value={f.brand} onChange={(e) => aggiorna({ brand: e.target.value })}>
+            <option value="">Tutte</option>
+            {(stat?.brand ?? []).map((b) => (
+              <option key={b.brand} value={b.brand}>
+                {b.brand} ({b.capi})
+              </option>
+            ))}
+          </select>
+        </label>
+        <label>
+          Categoria
+          <select value={f.categoria} onChange={(e) => aggiorna({ categoria: e.target.value })}>
+            <option value="">Tutte</option>
+            {CATEGORIE.map((c) => (
+              <option key={c} value={c}>
+                {maiuscola(c)}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label>
+          Materiale
+          <select value={f.materiale} onChange={(e) => aggiorna({ materiale: e.target.value })}>
+            <option value="">Tutti</option>
+            {MATERIALI.map((m) => (
+              <option key={m} value={m}>
+                {maiuscola(m)}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label>
+          Decennio
+          <select value={f.decennio} onChange={(e) => aggiorna({ decennio: e.target.value })}>
+            <option value="">Tutti</option>
+            {DECENNI.map((d) => (
+              <option key={d} value={d}>
+                Anni {d}
+              </option>
+            ))}
+          </select>
+        </label>
+        <button className="pulsante">Cerca</button>
+      </form>
+
+      {risultato.errore && <Errore errore={risultato.errore} />}
+      {risultato.caricamento && !risultato.dati && <Caricamento testo="Apro l’archivio…" />}
+      {risultato.dati && (
+        <>
+          <p className="nota conteggio-catalogo">
+            {risultato.dati.totale === 1 ? "1 capo" : `${numero(risultato.dati.totale, 0)} capi`}
+            {filtriAttivi && (
+              <>
+                {" · "}
+                <button
+                  type="button"
+                  className="link"
+                  onClick={() => {
+                    setRicerca("");
+                    setParametri(new URLSearchParams());
+                  }}
+                >
+                  Azzera i filtri
+                </button>
+              </>
+            )}
+          </p>
+
+          {risultato.dati.totale === 0 ? (
+            <div className="armadio-vuoto">
+              <h2>Nessun capo corrisponde</h2>
+              <p>Prova con meno filtri o con un’altra maison.</p>
+            </div>
+          ) : (
+            <ul className="griglia-catalogo">
+              {risultato.dati.dati.map((c) => (
+                <li key={c.tagId}>
+                  <Link to={`/v/${encodeURIComponent(c.tagId)}`} className="carta-catalogo">
+                    <span className="carta-anno">{c.annoProduzione ?? "—"}</span>
+                    <span className="carta-brand">{c.brand}</span>
+                    <span className="carta-modello">{c.codiceModello}</span>
+                    <span className="carta-dettagli">
+                      {[c.categoria && maiuscola(c.categoria), c.materialePrincipale && maiuscola(c.materialePrincipale)].filter(Boolean).join(" · ")}
+                    </span>
+                    <span className="carta-storia">
+                      {c.passaggi} {c.passaggi === 1 ? "proprietario" : "proprietari"} · {c.interventi} {c.interventi === 1 ? "intervento" : "interventi"}
+                    </span>
+                    {c.ultimoLuogo && <span className="carta-luogo">Ora a {c.ultimoLuogo}</span>}
+                  </Link>
+                </li>
+              ))}
+            </ul>
+          )}
+
+          {risultato.dati.pagine > 1 && (
+            <nav className="paginazione" aria-label="Pagine">
+              <button className="link" disabled={f.pagina <= 1} onClick={() => aggiorna({ pagina: String(f.pagina - 1) })}>
+                ← Precedente
+              </button>
+              <span>
+                Pagina {f.pagina} di {risultato.dati.pagine}
+              </span>
+              <button className="link" disabled={f.pagina >= risultato.dati.pagine} onClick={() => aggiorna({ pagina: String(f.pagina + 1) })}>
+                Successiva →
+              </button>
+            </nav>
+          )}
+        </>
+      )}
+    </section>
+  );
+}
+```
+
 ## `frontend/src/pages/DashboardPage.jsx`
 
 ```jsx
@@ -6993,7 +8303,7 @@ import { useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import Carosello from "../components/Carosello.jsx";
 import { FOTO_CAPI, FOTO_RIGENERAZIONE } from "../data/foto.js";
-import { IconaAgo, IconaChip, IconaFoglia, IconaFreccia, IconaGruccia, IconaScansione, IconaScudo } from "../components/Icone.jsx";
+import { IconaAgo, IconaCatalogo, IconaChip, IconaFoglia, IconaFreccia, IconaScansione, IconaScudo } from "../components/Icone.jsx";
 
 const PASSI = [
   { titolo: "Scansiona", testo: "Avvicina il telefono al tag NFC cucito nel capo oppure inquadra il QR code dell’etichetta." },
@@ -7038,14 +8348,14 @@ export default function HomePage() {
           </h1>
           <p className="eroe-testo">
             Avvicina il telefono al tag NFC cucito nel capo oppure inquadra il QR code: vedrai autenticità, interventi di
-            rigenerazione, passaggi di proprietà e impatto ambientale evitato. Senza app e senza registrazione.
+            rigenerazione, passaggi di proprietà e impatto ambientale evitato. Senza app e senza registrazione per chi acquista.
           </p>
           <div className="eroe-azioni">
             <Link to="/scan" className="pulsante pulsante-grande">
               <IconaScansione dimensione={20} /> Verifica un capo
             </Link>
-            <Link to="/armadio" className="pulsante pulsante-grande pulsante-secondario">
-              <IconaGruccia dimensione={20} /> Il tuo armadio
+            <Link to="/catalogo" className="pulsante pulsante-grande pulsante-secondario">
+              <IconaCatalogo dimensione={20} /> Esplora il catalogo
             </Link>
           </div>
           <ul className="garanzie">
@@ -7096,6 +8406,16 @@ export default function HomePage() {
           </ol>
         </section>
 
+        <section className="scheda invito-operatori">
+          <div>
+            <h2>Sei una boutique o un laboratorio?</h2>
+            <p className="nota">Crea il tuo account per registrare i capi, gli interventi di rigenerazione e i passaggi di proprietà.</p>
+          </div>
+          <Link to="/registrati" className="pulsante pulsante-grande">
+            Iscriviti
+          </Link>
+        </section>
+
         <section className="caratteristiche">
           {CARATTERISTICHE.map(({ Icona, titolo, testo }) => (
             <article key={titolo}>
@@ -7137,7 +8457,8 @@ const inAttesa = (capo) =>
   capo.passaggiProprieta.some((p) => p.ancoraggio?.stato === "in_attesa");
 
 function ModuloEvento({ onInvia, inCorso }) {
-  const [v, setV] = useState({ tipo: "riparazione", descrizione: "", materialiNuovi: "", operatore: "" });
+  const vuoto = { tipo: "riparazione", descrizione: "", materialiNuovi: "", operatore: "", luogo: "", data: "" };
+  const [v, setV] = useState(vuoto);
   const cambia = (k) => (e) => setV((x) => ({ ...x, [k]: e.target.value }));
   return (
     <form
@@ -7145,7 +8466,7 @@ function ModuloEvento({ onInvia, inCorso }) {
       onSubmit={(e) => {
         e.preventDefault();
         const dati = Object.fromEntries(Object.entries(v).filter(([, x]) => x.trim() !== ""));
-        onInvia(dati).then((ok) => ok && setV({ tipo: "riparazione", descrizione: "", materialiNuovi: "", operatore: "" }));
+        onInvia(dati).then((ok) => ok && setV(vuoto));
       }}
     >
       <label>
@@ -7172,6 +8493,16 @@ function ModuloEvento({ onInvia, inCorso }) {
           <input value={v.operatore} onChange={cambia("operatore")} maxLength={100} placeholder="es. Laboratorio Bari" />
         </label>
       </div>
+      <div className="riga">
+        <label>
+          Luogo
+          <input value={v.luogo} onChange={cambia("luogo")} maxLength={120} placeholder="es. Bari, Italia" />
+        </label>
+        <label>
+          Data <small>(se vuota: oggi)</small>
+          <input type="date" value={v.data} onChange={cambia("data")} max={new Date().toISOString().slice(0, 10)} />
+        </label>
+      </div>
       <button className="pulsante" disabled={inCorso}>
         Registra l’intervento
       </button>
@@ -7180,18 +8511,34 @@ function ModuloEvento({ onInvia, inCorso }) {
 }
 
 function ModuloPassaggio({ onInvia, inCorso }) {
-  const [nome, setNome] = useState("");
+  const vuoto = { proprietario: "", luogo: "", data: "" };
+  const [v, setV] = useState(vuoto);
+  const cambia = (k) => (e) => setV((x) => ({ ...x, [k]: e.target.value }));
   return (
     <form
-      className="modulo modulo-in-linea"
+      className="modulo"
       onSubmit={(e) => {
         e.preventDefault();
-        onInvia({ proprietario: nome.trim() }).then((ok) => ok && setNome(""));
+        const dati = Object.fromEntries(Object.entries(v).map(([k, x]) => [k, x.trim()]).filter(([, x]) => x !== ""));
+        onInvia(dati).then((ok) => ok && setV(vuoto));
       }}
     >
-      <input value={nome} onChange={(e) => setNome(e.target.value)} required maxLength={100} placeholder="Nome del nuovo proprietario" aria-label="Nuovo proprietario" />
-      <button className="pulsante" disabled={inCorso || !nome.trim()}>
-        Registra
+      <label>
+        Nuovo proprietario *
+        <input value={v.proprietario} onChange={cambia("proprietario")} required maxLength={100} placeholder="Nome e cognome, oppure la rivendita" />
+      </label>
+      <div className="riga">
+        <label>
+          Luogo
+          <input value={v.luogo} onChange={cambia("luogo")} maxLength={120} placeholder="es. Tokyo, Giappone" />
+        </label>
+        <label>
+          Data <small>(se vuota: oggi)</small>
+          <input type="date" value={v.data} onChange={cambia("data")} min="1900-01-01" max={new Date().toISOString().slice(0, 10)} />
+        </label>
+      </div>
+      <button className="pulsante" disabled={inCorso || !v.proprietario.trim()}>
+        Registra il passaggio
       </button>
     </form>
   );
@@ -7360,7 +8707,7 @@ export default function ItemDetailPage() {
               <span className="linea-data">{data(e.data)}</span>
               <strong>{TIPI_EVENTO[e.tipo] ?? e.tipo}</strong>
               <p>{e.descrizione}</p>
-              {(e.materialiNuovi || e.operatore) && <p className="nota">{[e.materialiNuovi, e.operatore].filter(Boolean).join(" · ")}</p>}
+              {(e.materialiNuovi || e.operatore || e.luogo) && <p className="nota">{[e.materialiNuovi, e.operatore, e.luogo].filter(Boolean).join(" · ")}</p>}
               <Ancoraggio ancoraggio={e.ancoraggio} />
             </li>
           ))}
@@ -7382,7 +8729,11 @@ export default function ItemDetailPage() {
               <span className="passo">{i + 1}</span>
               <span>
                 <strong>{p.proprietario}</strong>
-                <span className="nota"> · {data(p.data)}</span>
+                <span className="nota">
+                  {" "}
+                  · {data(p.data)}
+                  {p.luogo && ` · ${p.luogo}`}
+                </span>
               </span>
               <Ancoraggio ancoraggio={p.ancoraggio} />
             </li>
@@ -7483,7 +8834,7 @@ export default function LabelPage() {
 
 ```jsx
 import { useState } from "react";
-import { Navigate, useLocation, useNavigate } from "react-router-dom";
+import { Link, Navigate, useLocation, useNavigate } from "react-router-dom";
 import { useAuth } from "../hooks/useAuth.jsx";
 import { Errore } from "../components/Stato.jsx";
 
@@ -7530,6 +8881,9 @@ export default function LoginPage() {
           {inCorso ? "Accesso…" : "Accedi"}
         </button>
       </form>
+      <p className="nota nota-centrata">
+        Non hai ancora un account? <Link to="/registrati">Iscriviti</Link>
+      </p>
     </section>
   );
 }
@@ -7583,6 +8937,149 @@ export default function NotFoundPage() {
       <h1>Pagina non trovata</h1>
       <p>
         L’indirizzo non esiste. <Link to="/">Torna alla home</Link>.
+      </p>
+    </section>
+  );
+}
+```
+
+## `frontend/src/pages/RegisterPage.jsx`
+
+```jsx
+import { useMemo, useState } from "react";
+import { Link, Navigate, useNavigate } from "react-router-dom";
+import { useAuth } from "../hooks/useAuth.jsx";
+import { Errore } from "../components/Stato.jsx";
+
+const RUOLI_SCELTA = [
+  { valore: "commerciante", titolo: "Boutique o rivendita", testo: "Crei i capi, registri i passaggi di proprietà e associ i chip NFC." },
+  { valore: "artigiano", titolo: "Laboratorio artigiano", testo: "Registri gli interventi di riparazione, upcycling e sostituzione di parti." },
+];
+
+// Stesse regole del server (almeno 10 caratteri, una lettera e un numero) più qualche spunto in più
+function valutaPassword(p) {
+  const requisiti = [
+    { ok: p.length >= 10, testo: "Almeno 10 caratteri" },
+    { ok: /[A-Za-z]/.test(p), testo: "Una lettera" },
+    { ok: /\d/.test(p), testo: "Un numero" },
+  ];
+  const extra = [p.length >= 14, /[a-z]/.test(p) && /[A-Z]/.test(p), /[^A-Za-z0-9]/.test(p)].filter(Boolean).length;
+  const base = requisiti.every((r) => r.ok);
+  const livello = !p ? 0 : !base ? 1 : 2 + Math.min(extra, 2);
+  return { requisiti, livello, valida: base, etichetta: ["", "Troppo corta o semplice", "Sufficiente", "Buona", "Ottima"][livello] };
+}
+
+export default function RegisterPage() {
+  const { utente, registra } = useAuth();
+  const naviga = useNavigate();
+  const [v, setV] = useState({ nome: "", organizzazione: "", email: "", ruolo: "commerciante", password: "", conferma: "" });
+  const [errore, setErrore] = useState(null);
+  const [inCorso, setInCorso] = useState(false);
+  const [inAttesa, setInAttesa] = useState(false);
+  const forza = useMemo(() => valutaPassword(v.password), [v.password]);
+  const cambia = (k) => (e) => setV((x) => ({ ...x, [k]: e.target.value }));
+  const coincide = v.conferma === v.password;
+
+  if (utente && !inAttesa) return <Navigate to="/gestione" replace />;
+
+  const invia = async (e) => {
+    e.preventDefault();
+    setErrore(null);
+    if (!forza.valida) return setErrore({ message: "La password non rispetta i requisiti indicati." });
+    if (!coincide) return setErrore({ message: "Le due password non coincidono." });
+    setInCorso(true);
+    try {
+      const { conferma, organizzazione, ...campi } = v;
+      const risposta = await registra({ ...campi, ...(organizzazione.trim() ? { organizzazione: organizzazione.trim() } : {}) });
+      if (risposta.inAttesaDiApprovazione) setInAttesa(true);
+      else naviga("/gestione", { replace: true });
+    } catch (err) {
+      setErrore(err);
+    } finally {
+      setInCorso(false);
+    }
+  };
+
+  if (inAttesa) {
+    return (
+      <section className="scheda scheda-stretta">
+        <p className="sopratitolo">Iscrizione ricevuta</p>
+        <h1>Quasi fatto</h1>
+        <p>Un amministratore deve attivare il tuo account prima del primo accesso. Riceverai l’abilitazione appena sarà pronta.</p>
+        <Link to="/" className="pulsante pulsante-secondario">
+          Torna alla home
+        </Link>
+      </section>
+    );
+  }
+
+  return (
+    <section className="scheda scheda-stretta scheda-iscrizione">
+      <p className="sopratitolo">Area gestionale</p>
+      <h1>Crea il tuo account</h1>
+      <p className="nota">Per boutique, rivendite e laboratori artigiani. I clienti non hanno bisogno di iscriversi: verificano i capi senza account.</p>
+
+      <form className="modulo" onSubmit={invia} noValidate>
+        <fieldset className="scelta-ruolo">
+          <legend>Come lavori</legend>
+          {RUOLI_SCELTA.map((r) => (
+            <label key={r.valore} className={`scelta-ruolo-voce${v.ruolo === r.valore ? " scelta-ruolo-attiva" : ""}`}>
+              <input type="radio" name="ruolo" value={r.valore} checked={v.ruolo === r.valore} onChange={cambia("ruolo")} />
+              <span className="scelta-ruolo-titolo">{r.titolo}</span>
+              <span className="scelta-ruolo-testo">{r.testo}</span>
+            </label>
+          ))}
+        </fieldset>
+
+        <div className="riga">
+          <label>
+            Nome e cognome
+            <input value={v.nome} onChange={cambia("nome")} autoComplete="name" required maxLength={100} />
+          </label>
+          <label>
+            Attività <small>(facoltativo)</small>
+            <input value={v.organizzazione} onChange={cambia("organizzazione")} autoComplete="organization" maxLength={150} placeholder="es. Sartoria Bari Vecchia" />
+          </label>
+        </div>
+        <label>
+          Email
+          <input type="email" value={v.email} onChange={cambia("email")} autoComplete="username" required maxLength={150} />
+        </label>
+        <label>
+          Password
+          <input type="password" value={v.password} onChange={cambia("password")} autoComplete="new-password" required aria-describedby="forza-password" />
+        </label>
+
+        <div id="forza-password" className="forza-password" aria-live="polite">
+          <div className={`forza-barre forza-${forza.livello}`} aria-hidden="true">
+            <span />
+            <span />
+            <span />
+            <span />
+          </div>
+          <p className="forza-etichetta">{forza.etichetta || "Scegli una password di almeno 10 caratteri"}</p>
+          <ul className="forza-requisiti">
+            {forza.requisiti.map((r) => (
+              <li key={r.testo} className={r.ok ? "requisito-ok" : ""}>
+                {r.testo}
+              </li>
+            ))}
+          </ul>
+        </div>
+
+        <label>
+          Ripeti la password
+          <input type="password" value={v.conferma} onChange={cambia("conferma")} autoComplete="new-password" required aria-invalid={v.conferma !== "" && !coincide} />
+          {v.conferma !== "" && !coincide && <small className="campo-errore">Le due password non coincidono.</small>}
+        </label>
+
+        <Errore errore={errore} titolo="Iscrizione non riuscita" />
+        <button className="pulsante pulsante-grande" disabled={inCorso || !v.nome.trim() || !v.email.trim() || !forza.valida || !coincide}>
+          {inCorso ? "Creo l’account…" : "Crea l’account"}
+        </button>
+      </form>
+      <p className="nota nota-centrata">
+        Hai già un account? <Link to="/login">Accedi</Link>
       </p>
     </section>
   );
@@ -8006,54 +9503,60 @@ export async function classificaFoto(file) {
 ## `frontend/src/styles/app.css`
 
 ```css
-/* Regen Luxury — stile mobile-first. Palette: nero inchiostro, avorio, oro. */
+/* Regen Luxury — stile mobile-first. Palette: grigio perla e grafite, con il rosa confetto come unico colore vivo. */
 
-/* Font dei titoli: Cormorant Garamond (SIL Open Font License, file in src/assets/fonts) */
-@font-face { font-family: "Cormorant Garamond"; font-style: normal; font-weight: 500; font-display: swap; src: url("../assets/fonts/cormorant-garamond-latin-500-normal.woff2") format("woff2"); }
-@font-face { font-family: "Cormorant Garamond"; font-style: normal; font-weight: 600; font-display: swap; src: url("../assets/fonts/cormorant-garamond-latin-600-normal.woff2") format("woff2"); }
-@font-face { font-family: "Cormorant Garamond"; font-style: normal; font-weight: 700; font-display: swap; src: url("../assets/fonts/cormorant-garamond-latin-700-normal.woff2") format("woff2"); }
-@font-face { font-family: "Cormorant Garamond"; font-style: italic; font-weight: 500; font-display: swap; src: url("../assets/fonts/cormorant-garamond-latin-500-italic.woff2") format("woff2"); }
+/* Carattere: Jost (SIL Open Font License, file in src/assets/fonts). Titoli, menu e pulsanti in stampatello maiuscolo */
+@font-face { font-family: "Jost"; font-style: normal; font-weight: 300; font-display: swap; src: url("../assets/fonts/jost-latin-300-normal.woff2") format("woff2"); }
+@font-face { font-family: "Jost"; font-style: normal; font-weight: 400; font-display: swap; src: url("../assets/fonts/jost-latin-400-normal.woff2") format("woff2"); }
+@font-face { font-family: "Jost"; font-style: normal; font-weight: 500; font-display: swap; src: url("../assets/fonts/jost-latin-500-normal.woff2") format("woff2"); }
+@font-face { font-family: "Jost"; font-style: normal; font-weight: 600; font-display: swap; src: url("../assets/fonts/jost-latin-600-normal.woff2") format("woff2"); }
 
 :root {
-  --nero: #141311;
-  --inchiostro: #1c1b19;
-  --avorio: #f6f2ea;
-  --carta: #fffdf8;
-  --grigio: #6b665e;
-  --linea: #e6dfd2;
-  --oro: #a8843f;
-  --oro-vivo: #c9a25c;
-  --oro-chiaro: #f3ead9;
+  --grafite-scuro: #26242a;
+  --grafite: #2f2d33;
+  --perla: #efedee;
+  --carta: #fbfafb;
+  --grigio: #66626a;
+  --linea: #dcd8dc;
+  --rosa: #a23a62;
+  --confetto: #f4c2d3;
+  --confetto-vivo: #e58fae;
+  --confetto-chiaro: #fbe6ed;
   --verde: #2f6b4f;
-  --verde-chiaro: #e6f1eb;
-  --ambra: #9a6a12;
-  --ambra-chiaro: #faf0dc;
-  --rosso: #a23b2c;
-  --rosso-chiaro: #f8e7e3;
-  --display: "Cormorant Garamond", "Iowan Old Style", "Palatino Linotype", Palatino, Georgia, serif;
-  --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
-  --raggio: 16px;
-  --ombra: 0 1px 2px rgba(20, 19, 17, 0.04), 0 12px 32px rgba(20, 19, 17, 0.07);
+  --verde-chiaro: #e3eee8;
+  --ambra: #8a5d0c;
+  --ambra-chiaro: #f7ecd6;
+  --rosso: #a82438;
+  --rosso-chiaro: #fbe5e7;
+  --display: "Jost", "Century Gothic", "Avenir Next", "Segoe UI", sans-serif;
+  --sans: "Jost", "Century Gothic", "Avenir Next", "Segoe UI", sans-serif;
+  --raggio: 6px;
+  --ombra: 0 1px 2px rgba(38, 36, 42, 0.05), 0 10px 28px rgba(38, 36, 42, 0.06);
+  /* stampatello: lo scrivono titoli, menu, etichette e pulsanti */
+  --traccia-stampatello: 0.12em;
 }
 
 * { box-sizing: border-box; }
 html { -webkit-text-size-adjust: 100%; }
 body {
   margin: 0;
-  background: var(--avorio);
-  color: var(--inchiostro);
-  font: 17px/1.6 var(--sans);
+  background: var(--perla);
+  color: var(--grafite);
+  font: 400 16.5px/1.65 var(--sans);
   -webkit-font-smoothing: antialiased;
 }
-h1, h2, h3 { font-family: var(--display); font-weight: 600; line-height: 1.12; letter-spacing: 0.005em; margin: 0 0 0.5rem; }
-/* Cormorant usa numeri "all'antica" (1 simile a I): qui servono numeri allineati */
+::selection { background: var(--confetto); color: var(--grafite-scuro); }
+:focus-visible { outline: 2px solid var(--rosa); outline-offset: 3px; }
+/* Per scrivere TUTTO in stampatello (anche i testi lunghi) togli il commento alla regola seguente:
+   body { text-transform: uppercase; letter-spacing: 0.04em; } */
+h1, h2, h3 { font-family: var(--display); font-weight: 500; line-height: 1.22; letter-spacing: var(--traccia-stampatello); text-transform: uppercase; margin: 0 0 0.6rem; }
 h1, h2, h3, .riepilogo dd, .indicatore .valore, .passi-numero, .marchio-nome, .tendina-testa strong { font-variant-numeric: lining-nums; }
-h1 { font-size: clamp(2.1rem, 6vw, 3rem); }
-h2 { font-size: 1.75rem; }
-h3 { font-size: 1.35rem; }
+h1 { font-size: clamp(1.6rem, 4.6vw, 2.5rem); font-weight: 400; }
+h2 { font-size: 1.25rem; }
+h3 { font-size: 1rem; }
 p { margin: 0 0 0.75rem; }
-a { color: var(--inchiostro); text-decoration-color: var(--oro); text-underline-offset: 3px; }
-code { font-size: 0.85em; background: var(--oro-chiaro); padding: 0.1em 0.35em; border-radius: 6px; word-break: break-all; }
+a { color: var(--grafite); text-decoration-color: var(--rosa); text-underline-offset: 3px; }
+code { font-size: 0.85em; background: var(--confetto-chiaro); padding: 0.1em 0.35em; border-radius: 6px; word-break: break-all; }
 
 .pagina { min-height: 100vh; display: flex; flex-direction: column; }
 .contenuto { width: 100%; max-width: 820px; margin: 0 auto; padding: 1.75rem 1.1rem 4rem; flex: 1; }
@@ -8064,30 +9567,30 @@ code { font-size: 0.85em; background: var(--oro-chiaro); padding: 0.1em 0.35em; 
   position: sticky; top: 0; z-index: 20;
   display: grid; grid-template-columns: 1fr; justify-items: center; gap: 0.6rem;
   padding: 1rem 1rem 0.75rem;
-  background: var(--nero); color: var(--avorio);
-  border-bottom: 1px solid rgba(201, 162, 92, 0.35);
+  background: var(--grafite-scuro); color: var(--perla);
+  border-bottom: 1px solid rgba(229, 143, 174, 0.35);
 }
 .testata-vuoto { display: none; }
 .marchio { display: grid; justify-items: center; color: inherit; text-decoration: none; line-height: 1; }
-.marchio-nome { font-family: var(--display); font-weight: 600; font-size: clamp(2rem, 6.5vw, 3rem); letter-spacing: 0.02em; }
-.marchio-nome em { color: var(--oro-vivo); font-style: italic; font-weight: 500; }
-.marchio-motto { margin-top: 0.4rem; font-size: 0.64rem; letter-spacing: 0.24em; text-transform: uppercase; color: rgba(246, 242, 234, 0.6); }
+.marchio-nome { font-family: var(--display); font-weight: 400; font-size: clamp(1.5rem, 5vw, 2.3rem); letter-spacing: 0.36em; text-transform: uppercase; padding-left: 0.36em; }
+.marchio-nome em { color: var(--confetto-vivo); font-style: normal; font-weight: 500; }
+.marchio-motto { margin-top: 0.55rem; font-size: 0.62rem; letter-spacing: 0.3em; text-transform: uppercase; color: rgba(239, 237, 238, 0.6); }
 
 .menu { display: flex; flex-wrap: wrap; justify-content: center; align-items: center; gap: 0.25rem 0.35rem; }
 .menu-voce {
   display: inline-flex; align-items: center; gap: 0.4rem;
-  padding: 0.45rem 0.8rem; border-radius: 999px; border: 1px solid transparent;
-  background: none; color: rgba(246, 242, 234, 0.82); text-decoration: none;
-  font: 500 0.95rem var(--sans); cursor: pointer; white-space: nowrap;
+  padding: 0.5rem 0.8rem; border-radius: 3px; border: 1px solid transparent; text-transform: uppercase; letter-spacing: 0.12em;
+  background: none; color: rgba(239, 237, 238, 0.82); text-decoration: none;
+  font: 500 0.78rem var(--sans); cursor: pointer; white-space: nowrap;
   transition: color 0.2s, border-color 0.2s, background 0.2s;
 }
-.menu-voce:hover { color: #fff; border-color: rgba(201, 162, 92, 0.45); }
-.menu-voce.active { color: #fff; border-color: var(--oro-vivo); background: rgba(201, 162, 92, 0.14); }
-.menu-voce svg { color: var(--oro-vivo); }
-.menu-esci { color: rgba(246, 242, 234, 0.6); }
+.menu-voce:hover { color: #fff; border-color: rgba(229, 143, 174, 0.45); }
+.menu-voce.active { color: #fff; border-color: var(--confetto-vivo); background: rgba(229, 143, 174, 0.14); }
+.menu-voce svg { color: var(--confetto-vivo); }
+.menu-esci { color: rgba(239, 237, 238, 0.6); }
 .contatore {
   display: inline-grid; place-items: center; min-width: 1.3rem; height: 1.3rem; padding: 0 0.35rem;
-  border-radius: 999px; background: var(--oro-vivo); color: var(--nero); font-size: 0.72rem; font-weight: 700;
+  border-radius: 999px; background: var(--confetto-vivo); color: var(--grafite-scuro); font-size: 0.72rem; font-weight: 700;
 }
 .freccina { font-size: 0.7rem; opacity: 0.7; }
 .testo-corto { display: none; }
@@ -8096,25 +9599,25 @@ code { font-size: 0.85em; background: var(--oro-chiaro); padding: 0.1em 0.35em; 
   .testata { padding: 0.85rem 0.5rem 0.6rem; gap: 0.45rem; }
   .marchio-motto { font-size: 0.56rem; letter-spacing: 0.22em; }
   .menu { gap: 0.1rem; }
-  .menu-voce { padding: 0.4rem 0.55rem; font-size: 0.86rem; gap: 0.3rem; }
+  .menu-voce { padding: 0.4rem 0.5rem; font-size: 0.7rem; letter-spacing: 0.08em; gap: 0.3rem; }
   .menu-voce > svg { display: none; }
   .testo-lungo { display: none; }
   .testo-corto { display: inline; }
 }
 /* Su schermi larghi: titolo al centro e menu sulla destra, su una sola riga */
-@media (min-width: 1360px) {
+@media (min-width: 1700px) {
   .testata:not(.testata-operatore) { grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr); align-items: center; gap: 1.25rem; padding: 1.35rem 2rem; }
   .testata:not(.testata-operatore) .testata-vuoto { display: block; }
   .testata:not(.testata-operatore) .menu { justify-self: end; flex-wrap: nowrap; }
 }
-@media (min-width: 1600px) {
+@media (min-width: 1700px) {
   .testata-operatore { grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr); align-items: center; gap: 1.25rem; padding: 1.35rem 2rem; }
   .testata-operatore .testata-vuoto { display: block; }
   .testata-operatore .menu { justify-self: end; flex-wrap: nowrap; }
 }
 
 /* Etichetta breve "Armadio" dove lo spazio è poco (e sempre per gli operatori) */
-@media (min-width: 1360px) and (max-width: 1439px) { .testo-lungo { display: none; } .testo-corto { display: inline; } }
+@media (min-width: 1700px) and (max-width: 1799px) { .testo-lungo { display: none; } .testo-corto { display: inline; } }
 .testata-operatore .testo-lungo { display: none; }
 .testata-operatore .testo-corto { display: inline; }
 
@@ -8123,23 +9626,23 @@ code { font-size: 0.85em; background: var(--oro-chiaro); padding: 0.1em 0.35em; 
 .tendina {
   position: fixed; left: 50%; transform: translateX(-50%); top: calc(var(--h-testata, 120px) + 0.5rem);
   width: min(400px, calc(100vw - 1.5rem)); z-index: 30; overflow: hidden; text-align: left;
-  background: var(--carta); color: var(--inchiostro); border: 1px solid var(--linea); border-radius: 18px;
+  background: var(--carta); color: var(--grafite); border: 1px solid var(--linea); border-radius: 8px;
   box-shadow: 0 24px 60px rgba(0, 0, 0, 0.28);
 }
-@media (min-width: 1360px) {
+@media (min-width: 1700px) {
   .testata:not(.testata-operatore) .tendina { position: absolute; left: auto; right: 0; transform: none; top: calc(100% + 0.8rem); }
 }
 .tendina-testa { display: grid; padding: 1rem 1.15rem 0.75rem; border-bottom: 1px solid var(--linea); }
-.tendina-testa strong { font-family: var(--display); font-size: 1.45rem; line-height: 1.1; }
+.tendina-testa strong { font-family: var(--display); font-size: 1rem; font-weight: 500; letter-spacing: 0.14em; text-transform: uppercase; line-height: 1.2; }
 .tendina-testa span { font-size: 0.78rem; color: var(--grigio); }
 .tendina-vuota { padding: 1rem 1.15rem; margin: 0; color: var(--grigio); font-size: 0.93rem; }
 .tendina-elenco { list-style: none; margin: 0; padding: 0.35rem 0; max-height: min(380px, 55vh); overflow-y: auto; }
 .voce-storico { display: flex; align-items: center; justify-content: space-between; gap: 0.8rem; padding: 0.65rem 1.15rem; color: inherit; text-decoration: none; }
-.voce-storico:hover { background: var(--avorio); }
+.voce-storico:hover { background: var(--perla); }
 .voce-testo { display: grid; min-width: 0; }
 .voce-testo strong { font-size: 0.98rem; }
 .voce-testo span { font-size: 0.8rem; color: var(--grigio); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.tendina-piede { display: flex; justify-content: space-between; align-items: center; gap: 1rem; padding: 0.75rem 1.15rem; border-top: 1px solid var(--linea); background: var(--avorio); font-size: 0.9rem; }
+.tendina-piede { display: flex; justify-content: space-between; align-items: center; gap: 1rem; padding: 0.75rem 1.15rem; border-top: 1px solid var(--linea); background: var(--perla); font-size: 0.9rem; }
 
 .bollino { flex: none; display: inline-block; padding: 0.22rem 0.6rem; border-radius: 999px; font-size: 0.7rem; font-weight: 700; letter-spacing: 0.05em; text-transform: uppercase; }
 .bollino-ok { background: var(--verde-chiaro); color: var(--verde); }
@@ -8149,21 +9652,21 @@ code { font-size: 0.85em; background: var(--oro-chiaro); padding: 0.1em 0.35em; 
 /* ---------- Piede ---------- */
 .piede { text-align: center; color: var(--grigio); font-size: 0.84rem; padding: 2.2rem 1rem 2.6rem; border-top: 1px solid var(--linea); background: var(--carta); }
 .piede p { margin: 0.2rem 0; }
-.piede-marchio { font-family: var(--display); font-size: 1.6rem; font-weight: 600; color: var(--inchiostro); }
-.piede-marchio em { color: var(--oro); font-weight: 500; }
+.piede-marchio { font-family: var(--display); font-size: 1.05rem; font-weight: 400; letter-spacing: 0.34em; text-transform: uppercase; color: var(--grafite); }
+.piede-marchio em { color: var(--rosa); font-style: normal; font-weight: 500; }
 .piede-crediti { font-size: 0.74rem; opacity: 0.8; }
 
 /* ---------- Blocchi comuni ---------- */
 .scheda { background: var(--carta); border: 1px solid var(--linea); border-radius: var(--raggio); padding: 1.35rem; margin-bottom: 1rem; box-shadow: var(--ombra); }
 .scheda-stretta { max-width: 470px; margin-left: auto; margin-right: auto; }
 .sezione { border-top: 1px solid var(--linea); padding-top: 1.1rem; margin-top: 1.1rem; }
-.sopratitolo { text-transform: uppercase; letter-spacing: 0.2em; font-size: 0.72rem; color: var(--oro); margin-bottom: 0.45rem; font-weight: 700; }
-.sottotitolo { color: var(--grigio); font-size: 1.05rem; }
+.sopratitolo { text-transform: uppercase; letter-spacing: 0.22em; font-size: 0.72rem; color: var(--rosa); margin-bottom: 0.5rem; font-weight: 500; }
+.sottotitolo { color: var(--grigio); font-size: 1.05rem; letter-spacing: 0.02em; }
 .leggero { font-weight: 400; color: var(--grigio); }
 .nota { color: var(--grigio); font-size: 0.9rem; }
-.etichetta { display: inline-block; margin-left: 0.5rem; font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.08em; background: var(--oro-chiaro); color: var(--ambra); padding: 0.15rem 0.5rem; border-radius: 999px; vertical-align: middle; }
+.etichetta { display: inline-block; margin-left: 0.5rem; font-size: 0.68rem; font-weight: 500; text-transform: uppercase; letter-spacing: 0.12em; background: var(--confetto-chiaro); color: var(--ambra); padding: 0.15rem 0.5rem; border-radius: 999px; vertical-align: middle; }
 .pagina-testa { padding: 1rem 0 1.5rem; }
-.pagina-testa h1 { font-size: clamp(2.3rem, 6.5vw, 3.5rem); line-height: 1.04; }
+.pagina-testa h1 { font-size: clamp(1.8rem, 5vw, 2.8rem); line-height: 1.12; }
 .pagina-intro { font-size: 1.1rem; color: var(--grigio); max-width: 40rem; }
 .griglia-tre { display: grid; gap: 1rem; margin-top: 1rem; }
 @media (min-width: 680px) { .griglia-tre { grid-template-columns: repeat(3, 1fr); } }
@@ -8185,14 +9688,14 @@ code { font-size: 0.85em; background: var(--oro-chiaro); padding: 0.1em 0.35em; 
 @media (min-width: 1440px) { .home { grid-template-columns: 250px minmax(0, 1fr) 250px; gap: 4rem; } }
 
 .eroe { padding: 2.2rem 0 1.5rem; }
-.eroe h1 { font-size: clamp(2.6rem, 7.5vw, 4.6rem); line-height: 1.02; letter-spacing: -0.005em; margin-bottom: 1.2rem; }
-.eroe h1 em { color: var(--oro); font-weight: 500; }
+.eroe h1 { font-size: clamp(1.9rem, 5.6vw, 3.4rem); font-weight: 300; line-height: 1.16; letter-spacing: 0.1em; margin-bottom: 1.3rem; }
+.eroe h1 em { font-style: normal; font-weight: 500; }
 .eroe-testo { font-size: clamp(1.08rem, 2.3vw, 1.28rem); line-height: 1.6; color: var(--grigio); max-width: 42rem; }
 .eroe-azioni { display: flex; flex-wrap: wrap; gap: 0.75rem; margin: 1.7rem 0 1.5rem; }
 @media (max-width: 540px) { .eroe { padding-top: 1.2rem; } .eroe-azioni .pulsante { width: 100%; } }
 .garanzie { list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: 0.55rem 1.4rem; color: var(--grigio); font-size: 0.93rem; }
 .garanzie li { display: inline-flex; align-items: center; gap: 0.45rem; }
-.garanzie svg { color: var(--oro); }
+.garanzie svg { color: var(--rosa); }
 
 .scheda-codice { display: grid; gap: 1rem; padding: 1.6rem; margin: 1rem 0 3.5rem; }
 .scheda-codice h2 { margin-bottom: 0.15rem; }
@@ -8203,26 +9706,26 @@ code { font-size: 0.85em; background: var(--oro-chiaro); padding: 0.1em 0.35em; 
 @media (min-width: 760px) { .scheda-codice { grid-template-columns: 1fr 1.25fr; align-items: center; gap: 2rem; } }
 
 .come-funziona { margin: 0 0 3.5rem; }
-.come-funziona h2 { font-size: clamp(1.9rem, 4.5vw, 2.7rem); margin-bottom: 1.4rem; }
+.come-funziona h2 { font-size: clamp(1.3rem, 3.4vw, 1.9rem); font-weight: 400; margin-bottom: 1.4rem; }
 .passi { list-style: none; margin: 0; padding: 0; display: grid; gap: 1rem; }
 @media (min-width: 720px) { .passi { grid-template-columns: repeat(3, 1fr); } }
 .passi li { background: var(--carta); border: 1px solid var(--linea); border-radius: var(--raggio); padding: 1.4rem 1.3rem 1.3rem; box-shadow: var(--ombra); }
-.passi-numero { display: block; font-family: var(--display); font-size: 2.8rem; line-height: 1; color: var(--oro); margin-bottom: 0.5rem; }
-.passi h3 { font-size: 1.55rem; }
+.passi-numero { display: block; font-family: var(--display); font-size: 2.6rem; font-weight: 300; line-height: 1; color: var(--rosa); margin-bottom: 0.6rem; }
+.passi h3 { font-size: 1.05rem; }
 .passi p { color: var(--grigio); margin: 0; font-size: 0.98rem; }
 
-.caratteristiche { display: grid; gap: 1px; background: rgba(201, 162, 92, 0.3); border-radius: 24px; overflow: hidden; margin-bottom: 1rem; }
+.caratteristiche { display: grid; gap: 1px; background: rgba(229, 143, 174, 0.3); border-radius: 8px; overflow: hidden; margin-bottom: 1rem; }
 @media (min-width: 760px) { .caratteristiche { grid-template-columns: repeat(3, 1fr); } }
-.caratteristiche article { background: var(--nero); color: var(--avorio); padding: 1.9rem 1.6rem; }
-.caratteristiche h3 { font-size: 1.75rem; color: #fff; margin: 1rem 0 0.5rem; }
-.caratteristiche p { margin: 0; color: rgba(246, 242, 234, 0.74); font-size: 0.98rem; }
-.caratteristica-icona { display: grid; place-items: center; width: 54px; height: 54px; border-radius: 50%; border: 1px solid rgba(201, 162, 92, 0.6); color: var(--oro-vivo); }
+.caratteristiche article { background: var(--grafite-scuro); color: var(--perla); padding: 1.9rem 1.6rem; }
+.caratteristiche h3 { font-size: 1.1rem; color: #fff; margin: 1.1rem 0 0.5rem; }
+.caratteristiche p { margin: 0; color: rgba(239, 237, 238, 0.74); font-size: 0.98rem; }
+.caratteristica-icona { display: grid; place-items: center; width: 54px; height: 54px; border-radius: 50%; border: 1px solid rgba(229, 143, 174, 0.6); color: var(--confetto-vivo); }
 
 /* Caroselli di foto */
 .carosello { display: flex; flex-direction: column; height: 100%; }
-.carosello-etichetta { margin: 0 0 0.8rem; text-align: center; font: 700 0.68rem var(--sans); letter-spacing: 0.3em; text-transform: uppercase; color: var(--oro); }
+.carosello-etichetta { margin: 0 0 0.8rem; text-align: center; font: 700 0.68rem var(--sans); letter-spacing: 0.3em; text-transform: uppercase; color: var(--rosa); }
 .carosello-finestra {
-  flex: 1; overflow: hidden; border-radius: 20px;
+  flex: 1; overflow: hidden; border-radius: 8px;
   -webkit-mask-image: linear-gradient(to bottom, transparent, #000 7%, #000 93%, transparent);
   mask-image: linear-gradient(to bottom, transparent, #000 7%, #000 93%, transparent);
 }
@@ -8230,12 +9733,12 @@ code { font-size: 0.85em; background: var(--oro-chiaro); padding: 0.1em 0.35em; 
 .carosello-indietro .carosello-traccia { animation-direction: reverse; }
 .carosello:hover .carosello-traccia { animation-play-state: paused; }
 @keyframes scorri-verticale { to { transform: translateY(calc(-50% - 7px)); } }
-.carosello-foto { position: relative; flex: none; margin: 0; aspect-ratio: 3 / 4; border-radius: 16px; overflow: hidden; background: linear-gradient(160deg, #26231f, #7a6440); }
-.carosello-foto img { display: block; width: 100%; height: 100%; object-fit: cover; filter: saturate(0.9); transition: transform 0.9s ease, filter 0.9s ease; }
+.carosello-foto { position: relative; flex: none; margin: 0; aspect-ratio: 3 / 4; border-radius: 6px; overflow: hidden; background: linear-gradient(160deg, #34313a, #8d8691); }
+.carosello-foto img { display: block; width: 100%; height: 100%; object-fit: cover; filter: saturate(0.85) contrast(0.98); transition: transform 0.9s ease, filter 0.9s ease; }
 .carosello-foto:hover img { transform: scale(1.05); filter: saturate(1.05); }
 .carosello-foto figcaption {
   position: absolute; inset: auto 0 0; padding: 1.8rem 0.9rem 0.75rem;
-  font: italic 500 1.1rem/1.1 var(--display); color: #fff;
+  font: 500 0.74rem/1.2 var(--display); letter-spacing: 0.16em; text-transform: uppercase; color: #fff;
   background: linear-gradient(transparent, rgba(0, 0, 0, 0.58));
 }
 .foto-assente img { visibility: hidden; }
@@ -8258,22 +9761,22 @@ code { font-size: 0.85em; background: var(--oro-chiaro); padding: 0.1em 0.35em; 
 /* ---------- Il tuo armadio ---------- */
 .armadio-vuoto {
   display: grid; justify-items: center; gap: 0.4rem; text-align: center;
-  padding: 3rem 1.5rem; background: var(--carta); border: 1px dashed var(--oro); border-radius: 24px;
+  padding: 3rem 1.5rem; background: var(--carta); border: 1px dashed var(--confetto-vivo); border-radius: 8px;
 }
-.armadio-vuoto h2 { font-size: 2rem; }
+.armadio-vuoto h2 { font-size: 1.3rem; }
 .armadio-vuoto p { color: var(--grigio); max-width: 26rem; margin-bottom: 1rem; }
-.armadio-vuoto-icona { display: grid; place-items: center; width: 88px; height: 88px; margin-bottom: 0.5rem; border-radius: 50%; background: var(--oro-chiaro); color: var(--oro); }
+.armadio-vuoto-icona { display: grid; place-items: center; width: 88px; height: 88px; margin-bottom: 0.5rem; border-radius: 50%; background: var(--confetto-chiaro); color: var(--rosa); }
 .riepilogo { display: grid; grid-template-columns: repeat(3, 1fr); gap: 0.75rem; margin: 0 0 0.75rem; }
-.riepilogo div { background: var(--nero); color: var(--avorio); border-radius: 18px; padding: 1rem 1.1rem; }
-.riepilogo dt { font-size: 0.68rem; font-weight: 700; letter-spacing: 0.16em; text-transform: uppercase; color: var(--oro-vivo); }
-.riepilogo dd { margin: 0.35rem 0 0; font-family: var(--display); font-size: clamp(1.8rem, 6vw, 2.5rem); font-weight: 600; line-height: 1; }
+.riepilogo div { background: var(--grafite-scuro); color: var(--perla); border-radius: 6px; padding: 1rem 1.1rem; }
+.riepilogo dt { font-size: 0.68rem; font-weight: 700; letter-spacing: 0.16em; text-transform: uppercase; color: var(--confetto-vivo); }
+.riepilogo dd { margin: 0.35rem 0 0; font-family: var(--display); font-size: clamp(1.8rem, 6vw, 2.5rem); font-weight: 300; line-height: 1; }
 .riepilogo small { font-family: var(--sans); font-size: 0.85rem; opacity: 0.7; }
 .armadio-griglia { list-style: none; margin: 1.25rem 0 0; padding: 0; display: grid; gap: 1rem; }
-.capo-carta { display: grid; grid-template-columns: 84px 1fr; gap: 1rem 1.2rem; padding: 1.1rem; background: var(--carta); border: 1px solid var(--linea); border-radius: 20px; box-shadow: var(--ombra); }
-.capo-monogramma { display: grid; place-items: center; width: 84px; height: 106px; border-radius: 14px; background: linear-gradient(160deg, #1d1b18, #5a4a2e); color: var(--oro-vivo); font: italic 500 2.4rem var(--display); }
+.capo-carta { display: grid; grid-template-columns: 84px 1fr; gap: 1rem 1.2rem; padding: 1.1rem; background: var(--carta); border: 1px solid var(--linea); border-radius: 8px; box-shadow: var(--ombra); }
+.capo-monogramma { display: grid; place-items: center; width: 84px; height: 106px; border-radius: 6px; background: linear-gradient(160deg, #2f2d33, #6f6a75); color: var(--confetto-vivo); font: 300 2.4rem var(--display); letter-spacing: 0.05em; }
 .capo-info { min-width: 0; }
 .capo-info .sopratitolo { margin-bottom: 0.2rem; }
-.capo-info h2 { font-size: 1.9rem; margin: 0 0 0.1rem; }
+.capo-info h2 { font-size: 1.25rem; margin: 0 0 0.2rem; }
 .capo-info p { margin: 0 0 0.35rem; }
 .capo-dettagli { display: flex; flex-wrap: wrap; align-items: center; gap: 0.45rem 0.9rem; }
 .capo-impatto { display: inline-flex; align-items: center; gap: 0.3rem; color: var(--verde); font-size: 0.9rem; font-weight: 600; }
@@ -8286,59 +9789,63 @@ code { font-size: 0.85em; background: var(--oro-chiaro); padding: 0.1em 0.35em; 
 
 /* ---------- Pulsanti e moduli ---------- */
 .pulsante {
-  display: inline-flex; align-items: center; justify-content: center; gap: 0.5rem;
-  min-height: 48px; padding: 0 1.3rem; border-radius: 999px; border: 1px solid var(--inchiostro);
-  background: var(--inchiostro); color: var(--avorio); font: 600 0.97rem var(--sans); text-decoration: none; cursor: pointer;
-  transition: transform 0.15s, box-shadow 0.2s, background 0.2s;
+  display: inline-flex; align-items: center; justify-content: center; gap: 0.55rem;
+  min-height: 48px; padding: 0 1.4rem; border-radius: 3px; border: 1px solid var(--confetto);
+  background: var(--confetto); color: var(--grafite-scuro); font: 500 0.8rem var(--sans); letter-spacing: 0.14em; text-transform: uppercase;
+  text-decoration: none; cursor: pointer;
+  transition: transform 0.15s, box-shadow 0.2s, background 0.2s, border-color 0.2s;
 }
-.pulsante:hover:not(:disabled) { box-shadow: 0 8px 22px rgba(20, 19, 17, 0.18); transform: translateY(-1px); }
-.pulsante svg { color: var(--oro-vivo); }
+.pulsante:hover:not(:disabled) { background: var(--confetto-vivo); border-color: var(--confetto-vivo); box-shadow: 0 8px 22px rgba(162, 58, 98, 0.22); transform: translateY(-1px); }
+.pulsante svg { color: var(--grafite-scuro); }
 .pulsante:disabled { opacity: 0.5; cursor: not-allowed; }
-.pulsante-grande { min-height: 56px; padding: 0 1.7rem; font-size: 1.04rem; }
-.pulsante-secondario { background: transparent; color: var(--inchiostro); }
-.pulsante-secondario svg { color: var(--oro); }
-.pulsante-pericolo { background: var(--rosso); border-color: var(--rosso); }
-.link { background: none; border: 0; padding: 0; color: var(--inchiostro); text-decoration: underline; text-decoration-color: var(--oro); text-underline-offset: 3px; cursor: pointer; font: inherit; }
+.pulsante-grande { min-height: 56px; padding: 0 1.8rem; font-size: 0.84rem; }
+.pulsante-secondario { background: transparent; color: var(--grafite); border-color: var(--grafite); }
+.pulsante-secondario:hover:not(:disabled) { background: var(--grafite); border-color: var(--grafite); color: var(--perla); box-shadow: none; }
+.pulsante-secondario:hover:not(:disabled) svg { color: var(--confetto); }
+.pulsante-secondario svg { color: var(--rosa); }
+.pulsante-pericolo { background: var(--rosso); border-color: var(--rosso); color: #fff; }
+.pulsante-pericolo:hover:not(:disabled) { background: #8c1d2e; border-color: #8c1d2e; }
+.link { background: none; border: 0; padding: 0; color: var(--grafite); text-decoration: underline; text-decoration-color: var(--rosa); text-underline-offset: 3px; cursor: pointer; font: inherit; }
 .link:disabled { opacity: 0.4; cursor: default; }
 .link-pericolo { color: var(--rosso); text-decoration-color: var(--rosso); }
 
 .modulo { display: grid; gap: 0.85rem; margin: 0.75rem 0; }
-.modulo label { display: grid; gap: 0.3rem; font-weight: 600; font-size: 0.92rem; }
-.modulo small { font-weight: 400; color: var(--grigio); }
+.modulo label { display: grid; gap: 0.35rem; font-weight: 500; font-size: 0.74rem; letter-spacing: 0.12em; text-transform: uppercase; color: var(--grafite); }
+.modulo small { font-weight: 400; font-size: 0.82rem; letter-spacing: 0; text-transform: none; color: var(--grigio); }
 .modulo input, .modulo select, .modulo textarea {
-  width: 100%; min-height: 48px; padding: 0.6rem 0.85rem; border: 1px solid var(--linea); border-radius: 12px;
-  background: #fff; font: 16px var(--sans); color: var(--inchiostro);
+  width: 100%; min-height: 48px; padding: 0.6rem 0.85rem; border: 1px solid var(--linea); border-radius: 3px;
+  background: #fff; font: 400 16px var(--sans); letter-spacing: 0.01em; color: var(--grafite);
 }
 .modulo textarea { min-height: auto; resize: vertical; }
-.modulo input:focus, .modulo select:focus, .modulo textarea:focus { outline: 2px solid var(--oro); outline-offset: 1px; }
+.modulo input:focus, .modulo select:focus, .modulo textarea:focus { outline: 2px solid var(--confetto-vivo); outline-offset: 0; border-color: var(--confetto-vivo); }
 .riga { display: grid; gap: 0.85rem; }
 @media (min-width: 560px) { .riga { grid-template-columns: 1fr 1fr; } }
 .modulo-in-linea { grid-template-columns: 1fr auto; align-items: end; }
 .modulo-in-linea:has(select) { grid-template-columns: 1fr auto auto; }
 @media (max-width: 480px) { .modulo-in-linea:has(select) { grid-template-columns: 1fr 1fr; } .modulo-in-linea:has(select) input { grid-column: 1 / -1; } }
-.riquadro-ai { background: var(--oro-chiaro); padding: 0.8rem; border-radius: 10px; }
+.riquadro-ai { background: var(--confetto-chiaro); padding: 0.8rem; border-radius: 6px; }
 
 .intestazione-sezione { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: flex-end; gap: 1rem; margin-bottom: 1rem; }
 .azioni { display: flex; flex-wrap: wrap; gap: 0.5rem; align-items: center; }
 
 /* ---------- Avvisi e stati ---------- */
-.avviso { border-radius: 12px; padding: 0.85rem 1rem; margin: 0.75rem 0; }
+.avviso { border-radius: 6px; padding: 0.85rem 1rem; margin: 0.75rem 0; }
 .avviso p, .avviso ul { margin: 0.25rem 0 0; }
 .avviso-errore { background: var(--rosso-chiaro); color: var(--rosso); }
 .avviso-ok { background: var(--verde-chiaro); color: var(--verde); }
 .stato { display: flex; align-items: center; gap: 0.7rem; justify-content: center; padding: 3rem 1rem; color: var(--grigio); }
-.rotella { width: 20px; height: 20px; border: 2px solid var(--linea); border-top-color: var(--oro); border-radius: 50%; animation: gira 0.8s linear infinite; }
+.rotella { width: 20px; height: 20px; border: 2px solid var(--linea); border-top-color: var(--rosa); border-radius: 50%; animation: gira 0.8s linear infinite; }
 @keyframes gira { to { transform: rotate(360deg); } }
 @media (prefers-reduced-motion: reduce) { .rotella { animation: none; } }
 
 /* ---------- Certificato ---------- */
 .certificato-testata { padding: 0.25rem 0 1.1rem; }
-.certificato-testata h1 { font-size: clamp(2.6rem, 9vw, 3.8rem); line-height: 1; margin-bottom: 0.3rem; }
-.certificato { background: var(--carta); border: 1px solid var(--linea); border-radius: 22px; padding: 1.5rem 1.35rem; box-shadow: var(--ombra); }
+.certificato-testata h1 { font-size: clamp(1.8rem, 6.4vw, 2.8rem); font-weight: 300; line-height: 1.1; letter-spacing: 0.1em; margin-bottom: 0.4rem; }
+.certificato { background: var(--carta); border: 1px solid var(--linea); border-radius: 8px; padding: 1.5rem 1.35rem; box-shadow: var(--ombra); }
 @media (min-width: 720px) { .certificato { padding: 2rem 2.2rem; } }
-.certificato h3 { font-size: 1.5rem; }
+.certificato h3 { font-size: 0.98rem; }
 .esito { display: flex; gap: 0.9rem; align-items: flex-start; border-radius: var(--raggio); padding: 1rem 1.1rem; }
-.esito h1, .esito h2 { font-size: 1.5rem; margin-bottom: 0.25rem; }
+.esito h1, .esito h2 { font-size: 1.05rem; margin-bottom: 0.3rem; }
 .esito p { margin: 0 0 0.3rem; }
 .esito-icona { flex: none; width: 42px; height: 42px; border-radius: 50%; display: grid; place-items: center; font-size: 1.2rem; font-weight: 700; color: #fff; }
 .esito-ok { background: var(--verde-chiaro); }
@@ -8357,15 +9864,15 @@ code { font-size: 0.85em; background: var(--oro-chiaro); padding: 0.1em 0.35em; 
 .scheda-dati dt { color: var(--grigio); font-size: 0.9rem; }
 .scheda-dati dd { margin: 0; }
 
-.linea-tempo { list-style: none; margin: 0; padding: 0 0 0 1.1rem; border-left: 2px solid var(--oro-chiaro); }
+.linea-tempo { list-style: none; margin: 0; padding: 0 0 0 1.1rem; border-left: 2px solid var(--confetto-chiaro); }
 .linea-tempo li { position: relative; padding: 0 0 1rem 0.6rem; }
-.linea-tempo li::before { content: ""; position: absolute; left: -1.55rem; top: 0.35rem; width: 12px; height: 12px; border-radius: 50%; background: var(--oro); border: 3px solid var(--carta); }
+.linea-tempo li::before { content: ""; position: absolute; left: -1.55rem; top: 0.35rem; width: 12px; height: 12px; border-radius: 50%; background: var(--rosa); border: 3px solid var(--carta); }
 .linea-tempo p { margin: 0.15rem 0; }
 .linea-data { display: block; font-size: 0.78rem; color: var(--grigio); text-transform: uppercase; letter-spacing: 0.06em; }
 
 .catena { list-style: none; margin: 0 0 0.5rem; padding: 0; display: grid; gap: 0.5rem; }
 .catena li { display: flex; flex-wrap: wrap; gap: 0.3rem 0.7rem; align-items: center; }
-.passo { width: 26px; height: 26px; border-radius: 50%; background: var(--inchiostro); color: var(--avorio); display: grid; place-items: center; font-size: 0.8rem; font-weight: 700; }
+.passo { width: 26px; height: 26px; border-radius: 50%; background: var(--grafite); color: var(--perla); display: grid; place-items: center; font-size: 0.8rem; font-weight: 700; }
 
 .ancoraggio { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 0.35rem; font-size: 0.78rem; color: var(--grigio); }
 .ancoraggio .puntino { width: 8px; height: 8px; border-radius: 50%; background: var(--grigio); }
@@ -8374,8 +9881,8 @@ code { font-size: 0.85em; background: var(--oro-chiaro); padding: 0.1em 0.35em; 
 .ancoraggio-fallito .puntino, .ancoraggio-non_ancorato .puntino { background: var(--rosso); }
 
 .indicatori { display: grid; grid-template-columns: 1fr 1fr; gap: 0.75rem; margin: 0.5rem 0; }
-.indicatore { background: var(--verde-chiaro); border-radius: 14px; padding: 1rem; display: grid; }
-.indicatore .valore { font-family: var(--display); font-size: 2.4rem; font-weight: 600; color: var(--verde); line-height: 1.05; }
+.indicatore { background: var(--verde-chiaro); border-radius: 6px; padding: 1rem; display: grid; }
+.indicatore .valore { font-family: var(--display); font-size: 2.3rem; font-weight: 400; color: var(--verde); line-height: 1.05; }
 .indicatore .unita { font-weight: 600; }
 .indicatore .intervallo { font-size: 0.78rem; color: var(--grigio); }
 .fonti summary, .apribile summary { cursor: pointer; font-weight: 600; margin: 0.5rem 0; }
@@ -8383,8 +9890,8 @@ code { font-size: 0.85em; background: var(--oro-chiaro); padding: 0.1em 0.35em; 
 
 /* ---------- Area gestionale ---------- */
 .elenco-capi { list-style: none; padding: 0; margin: 0.5rem 0; display: grid; gap: 0.5rem; }
-.riga-capo { display: grid; gap: 0.2rem; background: var(--carta); border: 1px solid var(--linea); border-radius: 14px; padding: 0.85rem 1rem; text-decoration: none; }
-a.riga-capo:hover { border-color: var(--oro); }
+.riga-capo { display: grid; gap: 0.2rem; background: var(--carta); border: 1px solid var(--linea); border-radius: 6px; padding: 0.85rem 1rem; text-decoration: none; }
+a.riga-capo:hover { border-color: var(--confetto-vivo); background: var(--confetto-chiaro); }
 .paginazione { display: flex; justify-content: space-between; align-items: center; margin-top: 1rem; font-size: 0.9rem; }
 .zona-rischio { border-color: var(--rosso-chiaro); }
 
@@ -8394,7 +9901,7 @@ a.riga-capo:hover { border-color: var(--oro); }
 .cornice-video video { width: 100%; height: 100%; object-fit: cover; }
 
 /* ---------- Etichetta stampabile ---------- */
-.etichetta-stampa { display: flex; gap: 1.25rem; align-items: center; background: #fff; border: 1px dashed var(--grigio); border-radius: 12px; padding: 1rem; max-width: 520px; margin: 1rem 0; }
+.etichetta-stampa { display: flex; gap: 1.25rem; align-items: center; background: #fff; border: 1px dashed var(--grigio); border-radius: 6px; padding: 1rem; max-width: 520px; margin: 1rem 0; }
 .etichetta-stampa img { width: 170px; height: 170px; flex: none; }
 .etichetta-stampa .codice { font-family: ui-monospace, Menlo, monospace; font-size: 1.1rem; letter-spacing: 0.05em; }
 .etichetta-stampa .url { word-break: break-all; font-size: 0.75rem; }
@@ -8403,6 +9910,89 @@ a.riga-capo:hover { border-color: var(--oro); }
   body, .contenuto { background: #fff; padding: 0; }
   .etichetta-stampa { border: 1px solid #000; }
 }
+
+/* ---------- Iscrizione e accesso ---------- */
+.nota-centrata { text-align: center; margin: 1.1rem 0 0; }
+.menu-iscriviti { border-color: var(--confetto-vivo); color: var(--confetto); }
+.menu-iscriviti:hover, .menu-iscriviti.active { background: var(--confetto); border-color: var(--confetto); color: var(--grafite-scuro); }
+.scheda-iscrizione { max-width: 560px; }
+.scelta-ruolo { border: 0; margin: 0; padding: 0; display: grid; gap: 0.6rem; }
+.scelta-ruolo legend { padding: 0; margin-bottom: 0.5rem; font-weight: 500; font-size: 0.74rem; letter-spacing: 0.12em; text-transform: uppercase; }
+.modulo .scelta-ruolo-voce {
+  position: relative; display: grid; gap: 0.15rem; padding: 0.85rem 1rem 0.85rem 2.7rem; cursor: pointer;
+  border: 1px solid var(--linea); border-radius: 6px; background: #fff; text-transform: none; letter-spacing: 0; font-size: 1rem;
+  transition: border-color 0.2s, background 0.2s;
+}
+.modulo .scelta-ruolo-voce:hover { border-color: var(--confetto-vivo); }
+.modulo .scelta-ruolo-attiva { border-color: var(--rosa); background: var(--confetto-chiaro); }
+.modulo .scelta-ruolo-voce input { position: absolute; left: 1rem; top: 1.05rem; width: 18px; min-height: 0; height: 18px; accent-color: var(--rosa); }
+.scelta-ruolo-titolo { font-weight: 500; letter-spacing: 0.1em; text-transform: uppercase; font-size: 0.8rem; }
+.scelta-ruolo-testo { color: var(--grigio); font-size: 0.92rem; font-weight: 400; }
+.forza-password { margin: -0.25rem 0 0; }
+.forza-barre { display: grid; grid-template-columns: repeat(4, 1fr); gap: 4px; }
+.forza-barre span { height: 4px; border-radius: 2px; background: var(--linea); transition: background 0.25s; }
+.forza-1 span:nth-child(-n + 1) { background: var(--rosso); }
+.forza-2 span:nth-child(-n + 2) { background: var(--ambra); }
+.forza-3 span:nth-child(-n + 3) { background: var(--confetto-vivo); }
+.forza-4 span { background: var(--verde); }
+.forza-etichetta { margin: 0.4rem 0 0.2rem; font-size: 0.85rem; color: var(--grigio); }
+.forza-requisiti { list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: 0.25rem 1rem; font-size: 0.82rem; color: var(--grigio); }
+.forza-requisiti li::before { content: "○"; margin-right: 0.35rem; }
+.forza-requisiti .requisito-ok { color: var(--verde); }
+.forza-requisiti .requisito-ok::before { content: "●"; }
+.campo-errore { color: var(--rosso) !important; }
+
+/* ---------- Avviso dei dati dimostrativi ---------- */
+.avviso-demo { margin: 0 0 1rem; padding: 0.8rem 1rem; border-left: 3px solid var(--confetto-vivo); background: var(--confetto-chiaro); font-size: 0.9rem; color: var(--grafite); border-radius: 0 6px 6px 0; }
+
+/* ---------- Catalogo ---------- */
+.catalogo { max-width: 1100px; margin: 0 auto; }
+.contenuto:has(.catalogo) { max-width: 1160px; }
+.statistiche { margin: 0.5rem 0 2rem; }
+.numeri { display: grid; grid-template-columns: repeat(2, 1fr); gap: 1px; margin: 0 0 1.25rem; background: var(--linea); border: 1px solid var(--linea); border-radius: 8px; overflow: hidden; }
+@media (min-width: 720px) { .numeri { grid-template-columns: repeat(4, 1fr); } }
+.numeri div { background: var(--carta); padding: 1.1rem 1.2rem; }
+.numeri dt { font-size: 0.68rem; font-weight: 500; letter-spacing: 0.18em; text-transform: uppercase; color: var(--grigio); }
+.numeri dd { margin: 0.3rem 0 0; font-size: clamp(1.9rem, 5vw, 2.6rem); font-weight: 300; line-height: 1; color: var(--grafite); }
+.grafici { display: grid; gap: 1rem; align-items: start; }
+@media (min-width: 800px) { .grafici { grid-template-columns: 1fr 1fr; } }
+.barre { margin: 0; padding: 1.2rem 1.3rem; background: var(--carta); border: 1px solid var(--linea); border-radius: 8px; }
+.barre figcaption { font-size: 0.74rem; font-weight: 500; letter-spacing: 0.14em; text-transform: uppercase; margin-bottom: 0.9rem; }
+.barre ol { list-style: none; margin: 0; padding: 0; display: grid; gap: 0.55rem; }
+.barre li { display: grid; grid-template-columns: minmax(6.5rem, 9rem) 1fr 2.5rem; align-items: center; gap: 0.7rem; font-size: 0.9rem; }
+.barre-etichetta { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.barre-pista { height: 8px; border-radius: 2px; background: var(--perla); overflow: hidden; }
+.barre-riempimento { display: block; height: 100%; background: var(--confetto-vivo); border-radius: 2px; }
+.barre-valore { text-align: right; font-variant-numeric: tabular-nums; color: var(--grigio); }
+.barre .nota { margin: 0.8rem 0 0; }
+.filtri-catalogo { grid-template-columns: 1fr; padding: 1.1rem; background: var(--carta); border: 1px solid var(--linea); border-radius: 8px; align-items: end; }
+@media (min-width: 720px) { .filtri-catalogo { grid-template-columns: repeat(2, 1fr); } .filtro-ricerca { grid-column: 1 / -1; } }
+@media (min-width: 1000px) { .filtri-catalogo { grid-template-columns: 2fr 1.4fr 1fr 1fr 1fr auto; } .filtro-ricerca { grid-column: auto; } }
+.conteggio-catalogo { margin: 1.1rem 0 0.7rem; }
+.griglia-catalogo { list-style: none; margin: 0; padding: 0; display: grid; gap: 0.9rem; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); }
+.carta-catalogo {
+  display: grid; align-content: start; gap: 0.2rem; height: 100%; padding: 1.15rem 1.2rem 1.2rem;
+  background: var(--carta); border: 1px solid var(--linea); border-radius: 8px; color: inherit; text-decoration: none;
+  transition: border-color 0.2s, transform 0.2s, box-shadow 0.2s;
+}
+.carta-catalogo:hover { border-color: var(--confetto-vivo); transform: translateY(-2px); box-shadow: var(--ombra); }
+.carta-anno { font-size: 2rem; font-weight: 300; line-height: 1; color: var(--rosa); font-variant-numeric: tabular-nums; }
+.carta-brand { margin-top: 0.6rem; font-weight: 500; letter-spacing: 0.12em; text-transform: uppercase; font-size: 0.85rem; }
+.carta-modello { font-size: 0.98rem; line-height: 1.35; }
+.carta-dettagli { margin-top: 0.35rem; color: var(--grigio); font-size: 0.85rem; }
+.carta-storia { margin-top: 0.6rem; padding-top: 0.6rem; border-top: 1px solid var(--linea); font-size: 0.85rem; }
+.carta-luogo { color: var(--grigio); font-size: 0.82rem; }
+@media (prefers-reduced-motion: reduce) { .carta-catalogo:hover { transform: none; } }
+
+/* Ingresso della pagina: un solo movimento, all'apertura dell'eroe della home */
+@keyframes apri-eroe { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: none; } }
+.eroe { animation: apri-eroe 0.7s ease-out both; }
+@media (prefers-reduced-motion: reduce) { .eroe { animation: none; } }
+
+.invito-operatori { display: grid; gap: 1rem; align-items: center; margin: 0 0 3.5rem; padding: 1.6rem; }
+.invito-operatori h2 { margin-bottom: 0.2rem; }
+.invito-operatori .nota { margin: 0; }
+@media (min-width: 760px) { .invito-operatori { grid-template-columns: 1fr auto; gap: 2rem; } }
 ```
 
 ## `frontend/src/utils/archivio.js`
@@ -8640,6 +10230,7 @@ export default defineConfig(({ mode }) => {
     "copia-db": "npm --prefix backend run copia-db",
     "crea-admin": "npm --prefix backend run crea-admin --",
     "popola-demo": "npm --prefix backend run popola-demo --",
+    "popola-archivio": "npm --prefix backend run popola-archivio --",
     "passaggi": "npm --prefix backend run passaggi --",
     "misura-tempi": "npm --prefix backend run misura-tempi --",
     "migra": "npm --prefix backend run migra",
@@ -8686,6 +10277,7 @@ npm run imposta-db           # chiede la password del database user di Atlas (na
                              # genera JWT_SECRET se manca e prova subito la connessione
 npm run crea-admin           # crea il tuo account (la password la scegli tu, nascosta); se l'email esiste la reimposta
 npm run popola-demo          # capi dimostrativi (vedi sotto); si può rilanciare
+npm run popola-archivio      # 216 capi di lusso inventati (1981-2025, 53 paesi) nel TUO database Atlas; vedi sotto
 
 # 1) Backend  (terminale 1, resta aperto)
 npm run dev                  # "MongoDB Atlas: connesso" + API su http://localhost:5001 (la 5000 su macOS è di AirPlay)
@@ -8696,7 +10288,7 @@ npm run web                  # http://localhost:5173  (le chiamate /api vanno al
 # 3) Test  (terminale 3, con il backend avviato)
 npm run passaggi             # Passaggi 1-8: email e password del TUO account, non quella del database
 npm run misura-tempi         # requisito P (< 2 s)
-npm test                     # 48 test automatici (database in memoria)
+npm test                     # 61 test automatici (database in memoria)
 ```
 
 Le password sono due e diverse: quella del *database user* di Atlas (sta solo nel `.env`, si imposta con
@@ -8726,6 +10318,21 @@ scritto nel campo **«Hai il codice del tag?»** della home, oppure si apre `…
 Chip NFC di prova (vettore NXP AN12196): `/s?e=EF963FF7828658A599F3041510671E88&c=94EED9EE65337086` apre il
 certificato di `DEMO-BORSA-01` **una sola volta**; poi risponde «Link già utilizzato» (anti-replay). Rilanciando
 `npm run popola-demo` il link torna valido.
+
+## Iscrizione e catalogo
+
+- **`/registrati`**: form di iscrizione per boutique/rivendite (ruolo `commerciante`) e laboratori artigiani (`artigiano`).
+  Nessuno può iscriversi come admin o brand manager. Password di almeno 10 caratteri con lettera e numero.
+  Variabili nel `.env`: `REGISTRAZIONE_APPROVAZIONE=1` (l'account resta disattivo finché un admin lo abilita),
+  `REGISTRAZIONE_CHIUSA=1` (iscrizioni chiuse), `RATE_LIMIT_REGISTER_PER_HOUR`.
+- **`/catalogo`**: archivio pubblico con statistiche, ricerca e filtri (brand, categoria, materiale, decennio).
+  Mostra solo i capi marcati `dimostrativo`: i capi veri non sono mai elencati, per non esporre i codici dei tag.
+- **`npm run popola-archivio`**: crea 216 capi dimostrativi di 47 maison, con materiali, anni, interventi e passaggi di
+  proprietà in tutto il mondo (dal 1981 a oggi). Passa dalle API vere, quindi ogni voce è ancorata sul registro e
+  verificabile. Dati e nomi di persone/laboratori sono inventati; i marchi citati appartengono ai rispettivi titolari.
+  Opzioni: `-- --prova` (nessuna scrittura), `-- --quanti 200`, `-- --email tua@email`, `-- --verifica-tutti`,
+  `-- --esporta archivio.json`. Si può rilanciare: salta i capi già creati. I tag usati restano occupati sul registro
+  anche se poi si cancellano i capi dal database.
 
 ## API principali
 

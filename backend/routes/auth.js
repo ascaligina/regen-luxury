@@ -1,15 +1,16 @@
 import express from "express";
 import { z } from "zod";
-import { login, me, cambiaPassword, creaUtente, elencaUtenti, impostaAttivo } from "../controllers/authController.js";
+import { login, registra, me, cambiaPassword, creaUtente, elencaUtenti, impostaAttivo } from "../controllers/authController.js";
 import { autentica, richiediRuolo } from "../middleware/auth.js";
 import { valida } from "../middleware/valida.js";
-import { limiteLogin } from "../middleware/limiti.js";
+import { limiteLogin, limiteRegistrazione } from "../middleware/limiti.js";
 import * as schemi from "../validators/schemi.js";
 
 export default function authRouter() {
   const router = express.Router();
 
   router.post("/login", limiteLogin(), valida({ body: schemi.login }), login);
+  router.post("/registrazione", limiteRegistrazione(), valida({ body: schemi.registrazione }), registra);
   router.get("/me", autentica, me);
   router.post("/password", autentica, valida({ body: schemi.cambioPassword }), cambiaPassword);
 

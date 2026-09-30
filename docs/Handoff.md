@@ -32,7 +32,7 @@ Tesi in italiano, LaTeX con template PoliBa/DEI.
 | Backend | Node.js (ES modules), Express 4, Mongoose 8, JWT + bcrypt, zod, helmet, express-rate-limit |
 | Database | MongoDB Atlas (nuovo account, settembre 2026): cluster gratuito `tesis` (AWS Frankfurt), database `regen_luxury` |
 | Blockchain | Polygon PoS (Amoy per i test), smart contract `RegenLuxuryPassport` (ERC-721 + AccessControl + ERC2771Context, OpenZeppelin 5), ethers.js 6; oggi **registro simulato** salvato nel database |
-| Frontend | React 18 + Vite 6 + React Router 6, mobile-first, font Cormorant Garamond, lettore QR (`qr-scanner`), Web NFC su Android |
+| Frontend | React 18 + Vite 6 + React Router 6, mobile-first, font Jost (stampatello maiuscolo per titoli, menu e pulsanti), lettore QR (`qr-scanner`), Web NFC su Android |
 | NFC | NTAG 424 DNA, messaggi SUN (AES-128 + AES-CMAC, anti-replay con contatore) |
 | AI | MobileNetV3-Large (transfer learning) su TextileNet-fibre, esportato in ONNX; servizio FastAPI + onnxruntime |
 | Hosting | Render (piano gratuito, Frankfurt): un solo servizio con API + web app, deploy automatico da GitHub |

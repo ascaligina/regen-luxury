@@ -2,7 +2,7 @@ import { useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import Carosello from "../components/Carosello.jsx";
 import { FOTO_CAPI, FOTO_RIGENERAZIONE } from "../data/foto.js";
-import { IconaAgo, IconaChip, IconaFoglia, IconaFreccia, IconaGruccia, IconaScansione, IconaScudo } from "../components/Icone.jsx";
+import { IconaAgo, IconaCatalogo, IconaChip, IconaFoglia, IconaFreccia, IconaScansione, IconaScudo } from "../components/Icone.jsx";
 
 const PASSI = [
   { titolo: "Scansiona", testo: "Avvicina il telefono al tag NFC cucito nel capo oppure inquadra il QR code dell’etichetta." },
@@ -47,14 +47,14 @@ export default function HomePage() {
           </h1>
           <p className="eroe-testo">
             Avvicina il telefono al tag NFC cucito nel capo oppure inquadra il QR code: vedrai autenticità, interventi di
-            rigenerazione, passaggi di proprietà e impatto ambientale evitato. Senza app e senza registrazione.
+            rigenerazione, passaggi di proprietà e impatto ambientale evitato. Senza app e senza registrazione per chi acquista.
           </p>
           <div className="eroe-azioni">
             <Link to="/scan" className="pulsante pulsante-grande">
               <IconaScansione dimensione={20} /> Verifica un capo
             </Link>
-            <Link to="/armadio" className="pulsante pulsante-grande pulsante-secondario">
-              <IconaGruccia dimensione={20} /> Il tuo armadio
+            <Link to="/catalogo" className="pulsante pulsante-grande pulsante-secondario">
+              <IconaCatalogo dimensione={20} /> Esplora il catalogo
             </Link>
           </div>
           <ul className="garanzie">
@@ -103,6 +103,16 @@ export default function HomePage() {
               </li>
             ))}
           </ol>
+        </section>
+
+        <section className="scheda invito-operatori">
+          <div>
+            <h2>Sei una boutique o un laboratorio?</h2>
+            <p className="nota">Crea il tuo account per registrare i capi, gli interventi di rigenerazione e i passaggi di proprietà.</p>
+          </div>
+          <Link to="/registrati" className="pulsante pulsante-grande">
+            Iscriviti
+          </Link>
         </section>
 
         <section className="caratteristiche">

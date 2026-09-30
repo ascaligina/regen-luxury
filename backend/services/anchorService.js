@@ -91,11 +91,20 @@ function ancoraVoce(itemId, voceId, { campo, improntaDi, invia }) {
     } catch (err) {
       esito = fallito(hash, err);
     }
-    const aggiornato = await Item.findById(itemId);
-    const daAggiornare = aggiornato?.[campo].id(voceId);
-    if (!daAggiornare) return;
-    daAggiornare.ancoraggio = esito;
-    await aggiornato.save();
+    // Se nel frattempo è arrivata un'altra scrittura sullo stesso capo (es. un nuovo evento), il save()
+    // fallisce per conflitto di versione: senza un nuovo tentativo la voce resterebbe "in attesa".
+    for (let tentativo = 1; ; tentativo++) {
+      const aggiornato = await Item.findById(itemId);
+      const daAggiornare = aggiornato?.[campo].id(voceId);
+      if (!daAggiornare) return; // voce cancellata nel frattempo
+      daAggiornare.ancoraggio = esito;
+      try {
+        await aggiornato.save();
+        return;
+      } catch (err) {
+        if (err.name !== "VersionError" || tentativo >= 6) throw err;
+      }
+    }
   });
 }
 

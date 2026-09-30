@@ -64,3 +64,17 @@ export const IconaFreccia = (p) => (
     <path d="M5 12h14M13 6l6 6-6 6" />
   </Base>
 );
+export const IconaCatalogo = (p) => (
+  <Base {...p}>
+    <rect x="4" y="4" width="7" height="7" rx="1" />
+    <rect x="13" y="4" width="7" height="7" rx="1" />
+    <rect x="4" y="13" width="7" height="7" rx="1" />
+    <rect x="13" y="13" width="7" height="7" rx="1" />
+  </Base>
+);
+export const IconaMondo = (p) => (
+  <Base {...p}>
+    <circle cx="12" cy="12" r="8.5" />
+    <path d="M3.5 12h17M12 3.5c2.5 2.5 3.5 5.5 3.5 8.5s-1 6-3.5 8.5c-2.5-2.5-3.5-5.5-3.5-8.5s1-6 3.5-8.5z" />
+  </Base>
+);

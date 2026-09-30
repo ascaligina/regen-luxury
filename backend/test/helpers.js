@@ -20,6 +20,7 @@ export async function avviaAmbiente(env = {}) {
     MOCK_CHAIN_LATENCY_MS: "5",
     RATE_LIMIT_VERIFY_PER_MIN: "10000",
     RATE_LIMIT_LOGIN_PER_15MIN: "10000",
+    RATE_LIMIT_REGISTER_PER_HOUR: "10000",
     PUBLIC_BASE_URL: "https://regen.example",
     ...env,
   });

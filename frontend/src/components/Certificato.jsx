@@ -124,6 +124,11 @@ export default function Certificato({ dati }) {
         </p>
       </header>
 
+      {capo.dimostrativo && (
+        <p className="avviso-demo">
+          Capo dimostrativo: storia, luoghi e proprietari sono inventati per la demo della piattaforma. Il marchio citato appartiene al rispettivo titolare e non ha alcun legame con questo progetto.
+        </p>
+      )}
       <Esito certificato={cert} nfc={nfc} />
       <AzioniArmadio dati={dati} />
 
@@ -161,7 +166,10 @@ export default function Certificato({ dati }) {
           <ol className="linea-tempo">
             {capo.storicoRigenerazione.map((e, i) => (
               <li key={i}>
-                <span className="linea-data">{data(e.data)}</span>
+                <span className="linea-data">
+                  {data(e.data)}
+                  {e.luogo && ` · ${e.luogo}`}
+                </span>
                 <strong>{TIPI_EVENTO[e.tipo] ?? e.tipo}</strong>
                 <p>{e.descrizione}</p>
                 {e.materialiNuovi && <p className="nota">Materiali: {e.materialiNuovi}</p>}
@@ -184,7 +192,11 @@ export default function Certificato({ dati }) {
                 <span className="passo">{p.passo}</span>
                 <span>
                   <strong>{p.proprietario}</strong>
-                  <span className="nota"> · {data(p.data)}</span>
+                  <span className="nota">
+                    {" "}
+                    · {data(p.data)}
+                    {p.luogo && ` · ${p.luogo}`}
+                  </span>
                 </span>
                 <Ancoraggio ancoraggio={p.ancoraggio} />
               </li>

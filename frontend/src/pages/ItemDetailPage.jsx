@@ -15,7 +15,8 @@ const inAttesa = (capo) =>
   capo.passaggiProprieta.some((p) => p.ancoraggio?.stato === "in_attesa");
 
 function ModuloEvento({ onInvia, inCorso }) {
-  const [v, setV] = useState({ tipo: "riparazione", descrizione: "", materialiNuovi: "", operatore: "" });
+  const vuoto = { tipo: "riparazione", descrizione: "", materialiNuovi: "", operatore: "", luogo: "", data: "" };
+  const [v, setV] = useState(vuoto);
   const cambia = (k) => (e) => setV((x) => ({ ...x, [k]: e.target.value }));
   return (
     <form
@@ -23,7 +24,7 @@ function ModuloEvento({ onInvia, inCorso }) {
       onSubmit={(e) => {
         e.preventDefault();
         const dati = Object.fromEntries(Object.entries(v).filter(([, x]) => x.trim() !== ""));
-        onInvia(dati).then((ok) => ok && setV({ tipo: "riparazione", descrizione: "", materialiNuovi: "", operatore: "" }));
+        onInvia(dati).then((ok) => ok && setV(vuoto));
       }}
     >
       <label>
@@ -50,6 +51,16 @@ function ModuloEvento({ onInvia, inCorso }) {
           <input value={v.operatore} onChange={cambia("operatore")} maxLength={100} placeholder="es. Laboratorio Bari" />
         </label>
       </div>
+      <div className="riga">
+        <label>
+          Luogo
+          <input value={v.luogo} onChange={cambia("luogo")} maxLength={120} placeholder="es. Bari, Italia" />
+        </label>
+        <label>
+          Data <small>(se vuota: oggi)</small>
+          <input type="date" value={v.data} onChange={cambia("data")} max={new Date().toISOString().slice(0, 10)} />
+        </label>
+      </div>
       <button className="pulsante" disabled={inCorso}>
         Registra l’intervento
       </button>
@@ -58,18 +69,34 @@ function ModuloEvento({ onInvia, inCorso }) {
 }
 
 function ModuloPassaggio({ onInvia, inCorso }) {
-  const [nome, setNome] = useState("");
+  const vuoto = { proprietario: "", luogo: "", data: "" };
+  const [v, setV] = useState(vuoto);
+  const cambia = (k) => (e) => setV((x) => ({ ...x, [k]: e.target.value }));
   return (
     <form
-      className="modulo modulo-in-linea"
+      className="modulo"
       onSubmit={(e) => {
         e.preventDefault();
-        onInvia({ proprietario: nome.trim() }).then((ok) => ok && setNome(""));
+        const dati = Object.fromEntries(Object.entries(v).map(([k, x]) => [k, x.trim()]).filter(([, x]) => x !== ""));
+        onInvia(dati).then((ok) => ok && setV(vuoto));
       }}
     >
-      <input value={nome} onChange={(e) => setNome(e.target.value)} required maxLength={100} placeholder="Nome del nuovo proprietario" aria-label="Nuovo proprietario" />
-      <button className="pulsante" disabled={inCorso || !nome.trim()}>
-        Registra
+      <label>
+        Nuovo proprietario *
+        <input value={v.proprietario} onChange={cambia("proprietario")} required maxLength={100} placeholder="Nome e cognome, oppure la rivendita" />
+      </label>
+      <div className="riga">
+        <label>
+          Luogo
+          <input value={v.luogo} onChange={cambia("luogo")} maxLength={120} placeholder="es. Tokyo, Giappone" />
+        </label>
+        <label>
+          Data <small>(se vuota: oggi)</small>
+          <input type="date" value={v.data} onChange={cambia("data")} min="1900-01-01" max={new Date().toISOString().slice(0, 10)} />
+        </label>
+      </div>
+      <button className="pulsante" disabled={inCorso || !v.proprietario.trim()}>
+        Registra il passaggio
       </button>
     </form>
   );
@@ -238,7 +265,7 @@ export default function ItemDetailPage() {
               <span className="linea-data">{data(e.data)}</span>
               <strong>{TIPI_EVENTO[e.tipo] ?? e.tipo}</strong>
               <p>{e.descrizione}</p>
-              {(e.materialiNuovi || e.operatore) && <p className="nota">{[e.materialiNuovi, e.operatore].filter(Boolean).join(" · ")}</p>}
+              {(e.materialiNuovi || e.operatore || e.luogo) && <p className="nota">{[e.materialiNuovi, e.operatore, e.luogo].filter(Boolean).join(" · ")}</p>}
               <Ancoraggio ancoraggio={e.ancoraggio} />
             </li>
           ))}
@@ -260,7 +287,11 @@ export default function ItemDetailPage() {
               <span className="passo">{i + 1}</span>
               <span>
                 <strong>{p.proprietario}</strong>
-                <span className="nota"> · {data(p.data)}</span>
+                <span className="nota">
+                  {" "}
+                  · {data(p.data)}
+                  {p.luogo && ` · ${p.luogo}`}
+                </span>
               </span>
               <Ancoraggio ancoraggio={p.ancoraggio} />
             </li>

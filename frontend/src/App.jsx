@@ -7,6 +7,8 @@ import VerifyPage from "./pages/VerifyPage.jsx";
 import SunPage from "./pages/SunPage.jsx";
 import ScanPage from "./pages/ScanPage.jsx";
 import LoginPage from "./pages/LoginPage.jsx";
+import RegisterPage from "./pages/RegisterPage.jsx";
+import CatalogoPage from "./pages/CatalogoPage.jsx";
 import DashboardPage from "./pages/DashboardPage.jsx";
 import NewItemPage from "./pages/NewItemPage.jsx";
 import ItemDetailPage from "./pages/ItemDetailPage.jsx";
@@ -25,7 +27,9 @@ export default function App() {
         <Route path="s" element={<SunPage />} />
         <Route path="scan" element={<ScanPage />} />
         <Route path="armadio" element={<ArmadioPage />} />
+        <Route path="catalogo" element={<CatalogoPage />} />
         <Route path="login" element={<LoginPage />} />
+        <Route path="registrati" element={<RegisterPage />} />
 
         {/* Area gestionale (commercianti, artigiani, brand manager) */}
         <Route path="gestione" element={<Protetta />}>

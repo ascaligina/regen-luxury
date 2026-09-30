@@ -32,6 +32,16 @@ export function AuthProvider({ children }) {
     return d.utente;
   }, []);
 
+  // Iscrizione autonoma: con l'approvazione attiva non c'è subito il token (risposta 202)
+  const registra = useCallback(async (campi) => {
+    const d = await api("/auth/registrazione", { metodo: "POST", corpo: campi });
+    if (d.token) {
+      token.salva(d.token);
+      setUtente(d.utente);
+    }
+    return d;
+  }, []);
+
   const logout = useCallback(() => {
     token.cancella();
     setUtente(null);
@@ -40,7 +50,7 @@ export function AuthProvider({ children }) {
   // L'amministratore può tutto; gli altri solo i ruoli indicati
   const puo = useCallback((...ruoli) => !!utente && (utente.ruolo === "admin" || ruoli.includes(utente.ruolo)), [utente]);
 
-  return <AuthContext.Provider value={{ utente, pronto, login, logout, puo }}>{children}</AuthContext.Provider>;
+  return <AuthContext.Provider value={{ utente, pronto, login, registra, logout, puo }}>{children}</AuthContext.Provider>;
 }
 
 export const useAuth = () => useContext(AuthContext);

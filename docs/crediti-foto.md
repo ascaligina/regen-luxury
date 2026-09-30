@@ -29,5 +29,5 @@ Per la demo o per la stampa si possono sostituire con foto proprie: basta cambia
 
 ## Font
 
-**Cormorant Garamond** (titoli), Copyright 2015 The Cormorant Project Authors, **SIL Open Font License 1.1**.
+**Jost** (titoli e testi), Copyright 2020 The Jost Project Authors, **SIL Open Font License 1.1**.
 File `.woff2` (sottoinsieme latino) e testo della licenza in `frontend/src/assets/fonts/`.
