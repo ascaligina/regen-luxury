@@ -1,0 +1,7 @@
+# Addestramento (su Google Colab torch e torchvision sono già installati)
+torch>=2.2
+torchvision>=0.17
+matplotlib>=3.8
+onnx>=1.16
+onnxruntime>=1.18
+gdown>=5.1

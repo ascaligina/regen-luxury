@@ -1,0 +1,39 @@
+{
+  "data": "2026-09-22T16:23:45.114Z",
+  "rpc": "http://127.0.0.1:8545",
+  "controlli": {
+    "letturaCoerente": true,
+    "duplicato": true,
+    "negato": true
+  },
+  "misure": [
+    {
+      "operazione": "Deploy del contratto (una tantum)",
+      "gas": 1633950
+    },
+    {
+      "operazione": "Registrazione di un capo (mint)",
+      "gas": 124074
+    },
+    {
+      "operazione": "Registrazione di un secondo capo",
+      "gas": 106974
+    },
+    {
+      "operazione": "Aggiornamento dati / archiviazione",
+      "gas": 33720
+    },
+    {
+      "operazione": "Evento di rigenerazione (primo)",
+      "gas": 73186
+    },
+    {
+      "operazione": "Evento di rigenerazione (successivo)",
+      "gas": 56086
+    },
+    {
+      "operazione": "Passaggio di proprietà",
+      "gas": 55503
+    }
+  ]
+}

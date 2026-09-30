@@ -1,0 +1,22 @@
+{
+  // .vscode/settings.json - LaTeX Workshop su Windows SENZA latexmk (che richiede Perl)
+  "latex-workshop.latex.tools": [
+    {
+      "name": "pdflatex",
+      "command": "pdflatex",
+      "args": ["-synctex=1", "-interaction=nonstopmode", "-file-line-error", "%DOC%"]
+    },
+    {
+      "name": "bibtex",
+      "command": "bibtex",
+      "args": ["%DOCFILE%"]
+    }
+  ],
+  "latex-workshop.latex.recipes": [
+    { "name": "pdflatex x2", "tools": ["pdflatex", "pdflatex"] },
+    { "name": "pdflatex -> bibtex -> pdflatex x2", "tools": ["pdflatex", "bibtex", "pdflatex", "pdflatex"] }
+  ],
+  "latex-workshop.latex.recipe.default": "first",
+  "latex-workshop.latex.autoBuild.run": "onSave",
+  "latex-workshop.latex.clean.fileTypes": ["*.aux", "*.bbl", "*.blg", "*.log", "*.out", "*.toc", "*.lof", "*.lot", "*.synctex.gz"]
+}

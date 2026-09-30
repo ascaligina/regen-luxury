@@ -1,0 +1,30 @@
+{
+  "versione": 1,
+  "aggiornato": "2026-09-22",
+  "metodo": "Impatto evitato = impatto di produzione di un capo nuovo equivalente (fasi dalla fibra alla vendita, esclusi uso e fine vita) x fattore di sostituzione. Ogni valore e' una STIMA da letteratura, non una misura sul singolo capo.",
+  "fattoreSostituzione": {
+    "valore": 0.6,
+    "intervallo": [0.6, 0.85],
+    "fonte": "Farrant L., Olsen S.I., Wangel A. (2010). Environmental benefits from reusing clothes. The International Journal of Life Cycle Assessment, 15, 726-736.",
+    "nota": "L'acquisto di 100 capi di seconda mano evita la produzione di 60-85 capi nuovi (indagine su oltre 200 consumatori). Si usa il valore piu' prudente, 0,6."
+  },
+  "categorie": {
+    "jeans": {
+      "co2Kg": 20.0,
+      "acquaL": 2922,
+      "unitaFunzionale": "un paio di Levi's 501; fasi fibra, tessuto, confezione, accessori/imballaggio, trasporto e vendita (esclusi cura del consumatore e fine vita)",
+      "fonte": "Levi Strauss & Co. (2015). The Life Cycle of a Jean: understanding the environmental impact of a pair of Levi's 501 jeans.",
+      "calcolo": "clima: 2,9 + 9,0 + 2,6 + 1,7 + 3,8 = 20,0 kg CO2e (su 33,4 totali); acqua: 2565 + 236 + 34 + 77 + 10 = 2922 L (su 3781 totali)",
+      "verificato": true
+    },
+    "t-shirt": {
+      "co2Kg": 3.53,
+      "acquaL": 725,
+      "unitaFunzionale": "una t-shirt in cotone da 250 g, dalla culla al cancello (cradle-to-gate)",
+      "fonte": "Forfora N. et al. (2026). A Comparative Life Cycle Assessment of T-Shirt Production Using Viscose, Lyocell, Cotton, and Polyester. Sustainability, 18(8), 4070. https://doi.org/10.3390/su18084070",
+      "calcolo": "14,1 kg CO2e/kg x 0,25 kg = 3,53 kg CO2e; 2,9 m3/kg x 0,25 kg = 725 L",
+      "verificato": false,
+      "daVerificare": "Valori per kg estratti dal riassunto dell'articolo: controllare la tabella dei risultati prima di citarli in tesi."
+    }
+  }
+}

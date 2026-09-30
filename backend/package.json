@@ -1,0 +1,40 @@
+{
+  "name": "regen-luxury-backend",
+  "version": "2.0.0",
+  "description": "Backend per piattaforma di tracciabilità di capi di lusso rigenerati (tesi Politecnico di Bari)",
+  "main": "server.js",
+  "type": "module",
+  "engines": {
+    "node": ">=20.10"
+  },
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node --watch server.js",
+    "imposta-db": "node scripts/imposta-db.js",
+    "copia-db": "node scripts/copia-db.js",
+    "test": "node --test --test-concurrency=1",
+    "passaggi": "node scripts/passaggi.js",
+    "misura-tempi": "node scripts/misura-tempi.js",
+    "crea-admin": "node scripts/crea-admin.js",
+    "popola-demo": "node scripts/popola-demo.js",
+    "migra": "node scripts/migra-ancoraggi.js"
+  },
+  "dependencies": {
+    "bcryptjs": "^3.0.3",
+    "cors": "^2.8.6",
+    "dotenv": "^16.6.1",
+    "ethers": "^6.17.0",
+    "express": "^4.22.3",
+    "express-rate-limit": "^7.5.1",
+    "helmet": "^8.3.0",
+    "jsonwebtoken": "^9.0.3",
+    "mongoose": "^8.24.4",
+    "qrcode": "^1.5.4",
+    "zod": "^3.25.76"
+  },
+  "devDependencies": {
+    "mongodb-memory-server-core": "^10.4.3",
+    "supertest": "^7.2.2"
+  },
+  "license": "MIT"
+}

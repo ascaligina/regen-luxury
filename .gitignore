@@ -1,0 +1,28 @@
+# dipendenze e build
+node_modules/
+dist/
+build/
+coverage/
+# credenziali (mai su Git)
+.env
+.env.*
+!.env.example
+# dati generati
+backend/data/mock-ledger.json
+contracts/cache/
+contracts/artifacts/
+ai-module/.venv/
+ai-module/data/raw/*
+ai-module/data/processed/*
+!ai-module/data/**/.gitkeep
+ai-module/models/*
+!ai-module/models/.gitkeep
+__pycache__/
+.ipynb_checkpoints/
+.pytest_cache/
+# LaTeX
+*.aux
+*.log
+*.synctex.gz
+# sistema
+.DS_Store

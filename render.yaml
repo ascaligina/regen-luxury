@@ -1,0 +1,31 @@
+# Deploy gratuito su Render (https://render.com) — vedi docs/deploy.md
+# Un solo servizio: il backend espone le API e serve la web app React compilata (stesso dominio HTTPS).
+services:
+  - type: web
+    name: regen-luxury
+    runtime: node
+    plan: free
+    region: frankfurt
+    # --include=dev: con NODE_ENV=production npm salterebbe Vite (dipendenza di sviluppo) e la build fallirebbe
+    buildCommand: cd frontend && npm ci --include=dev && npm run build && cd ../backend && npm ci --omit=dev
+    startCommand: cd backend && node server.js
+    healthCheckPath: /api/health
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: NODE_VERSION
+        value: "22"
+      - key: TRUST_PROXY
+        value: "1"
+      - key: MONGO_URI # stringa di connessione Atlas: si inserisce nel pannello di Render, mai nel repository
+        sync: false
+      - key: JWT_SECRET
+        generateValue: true
+      # Registro blockchain simulato salvato nel database (il disco di Render si cancella a ogni riavvio).
+      # Dopo il deploy del contratto su Polygon Amoy: BLOCKCHAIN_MODE=polygon e, nel pannello di Render,
+      # POLYGON_RPC_URL, CONTRACT_ADDRESS, PLATFORM_PRIVATE_KEY, CHAIN_NAME (vedi docs/deploy.md).
+      - key: BLOCKCHAIN_MODE
+        value: mock
+      - key: MOCK_LEDGER_STORE
+        value: mongo
+      # PUBLIC_BASE_URL non serve: il backend usa l'indirizzo assegnato da Render (RENDER_EXTERNAL_URL).

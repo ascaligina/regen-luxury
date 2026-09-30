@@ -1,0 +1,138 @@
+% bibliografia-starter.bib - BASE DI PARTENZA per la tesi (BibTeX)
+% Voci di riferimento per le affermazioni più esposte in discussione.
+% Prima dell'uso: verificare ogni voce, aggiornare le date di consultazione
+% (campo note) e unire con la bibliografia del Cap. 2 già costruita.
+% Richiede \usepackage{url} o \usepackage{hyperref} per il campo \url.
+
+% ===================== 2.1 Blockchain a basso impatto =====================
+@misc{nakamoto2008bitcoin,
+  author       = {Nakamoto, Satoshi},
+  title        = {Bitcoin: A Peer-to-Peer Electronic Cash System},
+  year         = {2008},
+  howpublished = {\url{https://bitcoin.org/bitcoin.pdf}}
+}
+
+@misc{buterin2014ethereum,
+  author       = {Buterin, Vitalik},
+  title        = {Ethereum: A Next-Generation Smart Contract and Decentralized Application Platform},
+  year         = {2014},
+  howpublished = {\url{https://ethereum.org/en/whitepaper/}}
+}
+
+@misc{ethereum_energy,
+  author       = {{Ethereum Foundation}},
+  title        = {Ethereum Energy Consumption},
+  howpublished = {\url{https://ethereum.org/en/energy-consumption/}},
+  note         = {Fonte della riduzione di circa il 99{,}95\% dopo The Merge. Ultimo accesso: GG/MM/AAAA}
+}
+
+@techreport{ccri2022merge,
+  author       = {{Crypto Carbon Ratings Institute}},
+  title        = {The Merge -- Implications on the Electricity Consumption and Carbon Footprint of the Ethereum Network},
+  institution  = {CCRI},
+  year         = {2022},
+  month        = sep
+}
+
+@misc{polygon_pos_docs,
+  author       = {{Polygon Labs}},
+  title        = {Polygon PoS Documentation},
+  howpublished = {\url{https://docs.polygon.technology/pos/}},
+  note         = {Ultimo accesso: GG/MM/AAAA}
+}
+
+@misc{eip721,
+  author       = {Entriken, William and Shirley, Dieter and Evans, Jacob and Sachs, Nastassia},
+  title        = {{ERC-721}: Non-Fungible Token Standard},
+  year         = {2018},
+  howpublished = {\url{https://eips.ethereum.org/EIPS/eip-721}}
+}
+
+@misc{eip2771,
+  author       = {Sandford, Ronan and Siri, Liraz and Tirosh, Dror and Weiss, Yoav and Forshtat, Alex and Croubois, Hadrien and Tomar, Sachin and McCorry, Patrick and Venturo, Nicolas and Vogelsteller, Fabian and John, Gavin},
+  title        = {{EIP-2771}: Secure Protocol for Native Meta Transactions},
+  year         = {2020},
+  howpublished = {\url{https://eips.ethereum.org/EIPS/eip-2771}}
+}
+
+@misc{erc4337,
+  author       = {Buterin, Vitalik and Weiss, Yoav and Tirosh, Dror and Nacson, Shahar and Forshtat, Alex and Gazso, Kristof and Hess, Tjaden},
+  title        = {{ERC-4337}: Account Abstraction Using Alt Mempool},
+  year         = {2021},
+  howpublished = {\url{https://eips.ethereum.org/EIPS/eip-4337}}
+}
+
+@misc{openzeppelin_contracts,
+  author       = {{OpenZeppelin}},
+  title        = {OpenZeppelin Contracts 5.x Documentation},
+  howpublished = {\url{https://docs.openzeppelin.com/contracts/5.x/}},
+  note         = {Ultimo accesso: GG/MM/AAAA}
+}
+
+% ===================== 2.2 Smart Tag: NFC e QR Code =====================
+@manual{nxp_ntag424dna,
+  author       = {{NXP Semiconductors}},
+  title        = {{NTAG 424 DNA} and {NTAG 424 DNA TagTamper} -- Secure {NFC} {T4T} compliant {IC}},
+  note         = {Product data sheet NT4H2421Gx},
+  howpublished = {\url{https://www.nxp.com/docs/en/data-sheet/NT4H2421Gx.pdf}}
+}
+
+@misc{iso18004,
+  author       = {{ISO/IEC}},
+  title        = {{ISO/IEC} 18004 -- Information technology -- Automatic identification and data capture techniques -- {QR} Code bar code symbology specification},
+  year         = {2015},
+  note         = {Verificare l'edizione più recente prima della consegna}
+}
+
+% ===================== 2.3 Intelligenza Artificiale =====================
+@inproceedings{liu2016deepfashion,
+  author       = {Liu, Ziwei and Luo, Ping and Qiu, Shi and Wang, Xiaogang and Tang, Xiaoou},
+  title        = {{DeepFashion}: Powering Robust Clothes Recognition and Retrieval with Rich Annotations},
+  booktitle    = {Proceedings of the IEEE Conference on Computer Vision and Pattern Recognition (CVPR)},
+  pages        = {1096--1104},
+  year         = {2016}
+}
+
+% ===================== LCA e impatto ambientale =====================
+@misc{iso14040,
+  author       = {{International Organization for Standardization}},
+  title        = {{ISO} 14040:2006 -- Environmental management -- Life cycle assessment -- Principles and framework},
+  year         = {2006}
+}
+
+@misc{iso14044,
+  author       = {{International Organization for Standardization}},
+  title        = {{ISO} 14044:2006 -- Environmental management -- Life cycle assessment -- Requirements and guidelines},
+  year         = {2006}
+}
+
+@techreport{emf2017textiles,
+  author       = {{Ellen MacArthur Foundation}},
+  title        = {A New Textiles Economy: Redesigning Fashion's Future},
+  institution  = {Ellen MacArthur Foundation},
+  year         = {2017}
+}
+
+% ===================== Normativa: Passaporto Digitale del Prodotto =====================
+@misc{ue2024espr,
+  author       = {{Parlamento europeo e Consiglio dell'Unione europea}},
+  title        = {Regolamento ({UE}) 2024/1781 del 13 giugno 2024 che stabilisce il quadro per la definizione delle specifiche di progettazione ecocompatibile dei prodotti sostenibili ({ESPR})},
+  year         = {2024},
+  note         = {Gazzetta ufficiale dell'Unione europea, serie L, 28 giugno 2024. Istituisce il Passaporto Digitale del Prodotto}
+}
+
+% ===================== Cap. 3: requisiti FURPS+ =====================
+@book{grady1992metrics,
+  author       = {Grady, Robert B.},
+  title        = {Practical Software Metrics for Project Management and Process Improvement},
+  publisher    = {Prentice Hall},
+  year         = {1992}
+}
+
+@book{larman2004uml,
+  author       = {Larman, Craig},
+  title        = {Applying {UML} and Patterns: An Introduction to Object-Oriented Analysis and Design and Iterative Development},
+  edition      = {3},
+  publisher    = {Prentice Hall},
+  year         = {2004}
+}
